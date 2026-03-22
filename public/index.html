@@ -5,14 +5,16 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
   <meta name="theme-color" content="#0d3320">
   <meta name="apple-mobile-web-app-capable" content="yes">
-  <meta name="apple-mobile-web-app-title" content="Bridge">
   <title>Bridge – Card Game</title>
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
 
-<!-- ═══════════════════════ LOGIN SCREEN ═══════════════════════ -->
-<div id="login-screen" class="screen active">
+<!-- ═══ ANIMATED BACKGROUND ═══ -->
+<div id="bg-canvas"></div>
+
+<!-- ═══════════ LOGIN ═══════════ -->
+<div id="login-screen" class="screen">
   <div class="login-wrap">
     <div class="logo-area">
       <div class="logo-cards">
@@ -23,42 +25,29 @@
       <h1>Bridge</h1>
       <p class="tagline">5-Player Real-Time Card Game</p>
     </div>
-
-    <!-- Connection status – shown until server is reachable -->
-    <div id="conn-status" style="
-      text-align:center; font-size:13px; padding:8px 16px;
-      border-radius:8px; background:rgba(0,0,0,0.3);
-      border:1px solid rgba(255,255,255,0.1);
-      width:100%; max-width:380px;
-    ">⏳ Connecting to server…</div>
-
+    <div id="conn-status" class="conn-bar">⏳ Connecting…</div>
     <div class="login-box">
       <label>Your Name</label>
       <input id="name-input" type="text" placeholder="Enter your name" maxlength="20" autocomplete="off" autofocus>
-
       <div class="login-tabs">
         <button id="tab-create" class="tab active" onclick="switchTab('create')">Create Room</button>
         <button id="tab-join"   class="tab"        onclick="switchTab('join')">Join Room</button>
       </div>
-
       <div id="pane-create" class="tab-pane">
-        <p class="hint">You'll get a 6-letter room code to share with 4 friends.</p>
+        <p class="hint">You'll get a 6-letter room code to share with friends.</p>
         <button class="btn-primary" onclick="createRoom()">Create Room</button>
       </div>
-
       <div id="pane-join" class="tab-pane hidden">
         <label>Room Code</label>
-        <input id="room-input" type="text" placeholder="E.g. AB12CD" maxlength="6"
-          style="text-transform:uppercase" autocomplete="off">
+        <input id="room-input" type="text" placeholder="E.g. AB12CD" maxlength="6" style="text-transform:uppercase" autocomplete="off">
         <button class="btn-primary" onclick="joinRoom()">Join Game</button>
       </div>
-
       <p id="login-error" class="error-msg"></p>
     </div>
   </div>
 </div>
 
-<!-- ═══════════════════════ LOBBY SCREEN ═══════════════════════ -->
+<!-- ═══════════ LOBBY ═══════════ -->
 <div id="lobby-screen" class="screen hidden">
   <div class="lobby-wrap">
     <h2>Room Code</h2>
@@ -66,74 +55,89 @@
       <span id="room-code-text">------</span>
       <small>Tap to copy</small>
     </div>
-    <p class="hint">Share this code with 4 friends. Game needs exactly 5 players.</p>
-
+    <p class="hint">Share this code with friends. Need exactly 5 players/bots.</p>
     <div class="seat-grid" id="seat-grid"></div>
-
-    <div id="lobby-status">Waiting for players… <span id="player-count">1</span>/5</div>
-
-    <button id="start-btn"  class="btn-primary hidden" onclick="startGame()">Start Game ▶</button>
-    <button id="leave-btn"  class="btn-leave hidden"   onclick="leaveRoom()">🚪 Leave Room</button>
-    <button id="cancel-lobby-btn" class="btn-leave hidden" onclick="cancelGame()">✕ Cancel Room</button>
+    <div id="lobby-status">Waiting… <span id="player-count">1</span>/5</div>
+    <!-- Host bot controls -->
+    <div id="bot-controls" class="hidden" style="display:flex;gap:8px;flex-wrap:wrap;justify-content:center;width:100%;max-width:380px">
+      <button class="btn-bot" onclick="addBot()">🤖 Add Bot</button>
+    </div>
+    <button id="start-btn"        class="btn-primary hidden" onclick="startGame()">Start Game ▶</button>
+    <button id="leave-btn"        class="btn-leave   hidden" onclick="leaveRoom()">🚪 Leave Room</button>
+    <button id="cancel-lobby-btn" class="btn-leave   hidden" onclick="cancelGame()">✕ Cancel Room</button>
     <p id="lobby-hint" class="hint"></p>
   </div>
 </div>
 
-<!-- ═══════════════════════ GAME SCREEN ═══════════════════════ -->
+<!-- ═══════════ GAME ═══════════ -->
 <div id="game-screen" class="screen hidden">
-
+  <!-- Sticky top bar -->
   <div id="players-ring" class="players-ring"></div>
-
   <div id="info-strip">
-    <span id="info-phase" class="chip"></span>
-    <span id="info-trump" class="chip chip-suit"></span>
-    <span id="info-bid"   class="chip"></span>
-    <span id="info-round" class="chip"></span>
-    <button id="cancel-game-btn" class="btn-cancel-game hidden" onclick="cancelGame()">✕ Cancel Game</button>
+    <span id="info-phase"  class="chip"></span>
+    <span id="info-trump"  class="chip chip-suit"></span>
+    <span id="info-bid"    class="chip"></span>
+    <span id="info-round"  class="chip"></span>
+    <button id="cancel-game-btn" class="btn-cancel-game hidden" onclick="cancelGame()">✕ End</button>
   </div>
-
   <div id="msg-bar"></div>
 
-  <div id="center-area">
-    <div id="trick-zone">
-      <div id="trick-title">Table</div>
-      <div id="trick-cards-row"></div>
+  <!-- Three-column play area -->
+  <div id="play-area">
+    <!-- LEFT: Teammate reveal panel -->
+    <div id="teammate-panel">
+      <div class="side-title">Teammates</div>
+      <div id="teammate-list"></div>
     </div>
-    <div id="action-panel"></div>
+
+    <!-- CENTER: Current trick + action -->
+    <div id="center-area">
+      <div id="trick-zone">
+        <div id="trick-title">Current Trick</div>
+        <div id="trick-cards-row"></div>
+      </div>
+      <div id="action-panel"></div>
+    </div>
+
+    <!-- RIGHT: Last trick -->
+    <div id="last-trick-panel">
+      <div class="side-title">Last Trick</div>
+      <div id="last-trick-winner-label"></div>
+      <div id="last-trick-cards"></div>
+    </div>
   </div>
 
+  <!-- Sticky bottom: my cards -->
   <div id="my-hand-zone">
     <div id="my-hand-label">Your Cards <span id="hand-count"></span></div>
     <div id="my-cards-row"></div>
   </div>
-
 </div>
 
-<!-- ═══════════════════════ SCORING SCREEN ═══════════════════════ -->
+<!-- ═══════════ SCORING ═══════════ -->
 <div id="scoring-screen" class="screen hidden">
   <div class="scoring-wrap">
     <h2 id="score-title">Round Over</h2>
     <div id="score-summary"></div>
-    <table id="score-table" class="score-tbl">
-      <thead><tr><th style="text-align:left">Player</th><th>Total</th></tr></thead>
-      <tbody id="score-body"></tbody>
-    </table>
+    <div style="overflow-x:auto;width:100%;max-width:500px">
+      <table id="score-table" class="score-tbl">
+        <thead><tr><th style="text-align:left">Player</th><th>Total</th></tr></thead>
+        <tbody id="score-body"></tbody>
+      </table>
+    </div>
     <div id="score-actions">
-      <button id="next-round-btn" class="btn-primary hidden" onclick="nextRound()">Next Round ▶</button>
-      <button id="cancel-score-btn" class="btn-leave hidden" onclick="cancelGame()">✕ Cancel &amp; Return to Start</button>
+      <button id="next-round-btn"  class="btn-primary hidden" onclick="nextRound()">Next Round ▶</button>
+      <button id="cancel-score-btn" class="btn-leave  hidden" onclick="cancelGame()">✕ End &amp; Show Winner</button>
       <p id="waiting-next" class="hint hidden">Waiting for host to start next round…</p>
     </div>
   </div>
 </div>
 
-<!-- ═══════════════════════ ASK MODAL ═══════════════════════ -->
+<!-- ═══════════ ASK MODAL ═══════════ -->
 <div id="ask-modal" class="modal-overlay hidden">
   <div class="modal-box">
     <h3>Ask for 2 Cards</h3>
-    <p class="hint">
-      Pick any 2 cards <strong>not in your 10-card hand</strong>.<br>
-      Their holders are your secret teammates.
-    </p>
+    <p class="hint">Pick 2 cards <strong>not in your 10-card hand</strong>. Their holders are your secret teammates.</p>
     <div id="ask-suits"></div>
     <div class="modal-footer">
       <span id="ask-count-label">0 / 2 selected</span>
@@ -143,68 +147,38 @@
   </div>
 </div>
 
+<!-- ═══════════ EARLY LOSS MODAL ═══════════ -->
+<div id="early-loss-modal" class="modal-overlay hidden">
+  <div class="modal-box" style="text-align:center">
+    <div style="font-size:48px;margin-bottom:8px">😞</div>
+    <h3 id="early-loss-title">Bid Lost!</h3>
+    <p id="early-loss-body" class="hint" style="margin:12px 0;font-size:14px"></p>
+    <button class="btn-primary" style="max-width:200px" onclick="closeEarlyLoss()">Continue Playing</button>
+  </div>
+</div>
+
+<!-- ═══════════ TRUMP NOTIFICATION ═══════════ -->
+<div id="trump-toast" class="trump-toast hidden"></div>
+
+<!-- ═══════════ PODIUM ═══════════ -->
+<div id="podium-screen" class="hidden" style="
+  position:fixed;inset:0;z-index:999;
+  background:linear-gradient(160deg,#0a1a2e 0%,#0d3320 60%,#1a0a2e 100%);
+  display:flex;flex-direction:column;align-items:center;justify-content:center;
+  font-family:'Playfair Display',Georgia,serif;overflow:hidden;">
+  <canvas id="firework-canvas" style="position:absolute;inset:0;pointer-events:none;"></canvas>
+  <div id="podium-title"     style="font-size:32px;color:#f0d080;text-shadow:0 0 30px rgba(240,208,80,.6);margin-bottom:8px;letter-spacing:2px;text-align:center;z-index:2;">🏆 Final Standings</div>
+  <div id="podium-rounds"    style="font-size:13px;color:rgba(240,232,208,.5);margin-bottom:32px;z-index:2;"></div>
+  <div id="podium-stage"     style="display:flex;align-items:flex-end;gap:12px;z-index:2;margin-bottom:28px;">
+    <div class="podium-block" id="pod-2" style="--h:110px;--delay:.4s;--col:#c0c0c0;"><div class="pod-name"></div><div class="pod-score"></div><div class="pod-medal">🥈</div><div class="pod-rank">2nd</div><div class="pod-bar"></div></div>
+    <div class="podium-block" id="pod-1" style="--h:150px;--delay:0s;--col:#f0d080;"><div class="pod-name"></div><div class="pod-score"></div><div class="pod-medal">🥇</div><div class="pod-rank">1st</div><div class="pod-bar"></div></div>
+    <div class="podium-block" id="pod-3" style="--h:80px;--delay:.7s;--col:#cd7f32;"><div class="pod-name"></div><div class="pod-score"></div><div class="pod-medal">🥉</div><div class="pod-rank">3rd</div><div class="pod-bar"></div></div>
+  </div>
+  <div id="podium-rest"      style="display:flex;gap:20px;z-index:2;flex-wrap:wrap;justify-content:center;"></div>
+  <div id="podium-countdown" style="margin-top:24px;font-size:13px;color:rgba(240,232,208,.4);font-family:'DM Sans',sans-serif;z-index:2;"></div>
+</div>
+
 <script src="/socket.io/socket.io.js"></script>
 <script src="client.js"></script>
-
-<!-- ═══════════════════════ PODIUM SCREEN ═══════════════════════ -->
-<div id="podium-screen" class="hidden" style="
-  position:fixed; inset:0; z-index:999;
-  background: linear-gradient(160deg, #0a1a2e 0%, #0d3320 60%, #1a0a2e 100%);
-  display:flex; flex-direction:column; align-items:center; justify-content:center;
-  font-family:'Playfair Display',Georgia,serif;
-  overflow:hidden;
-">
-  <!-- Firework canvases -->
-  <canvas id="firework-canvas" style="position:absolute;inset:0;pointer-events:none;"></canvas>
-
-  <div id="podium-title" style="
-    font-size:32px; color:#f0d080; text-shadow:0 0 30px rgba(240,208,80,0.6);
-    margin-bottom:8px; letter-spacing:2px; text-align:center; z-index:2;
-  ">🏆 Final Standings</div>
-
-  <div id="podium-rounds" style="
-    font-size:13px; color:rgba(240,232,208,0.5); margin-bottom:32px; z-index:2;
-  "></div>
-
-  <!-- Podium blocks -->
-  <div id="podium-stage" style="
-    display:flex; align-items:flex-end; gap:12px; z-index:2; margin-bottom:28px;
-  ">
-    <!-- 2nd place -->
-    <div class="podium-block" id="pod-2" style="--h:110px; --delay:0.4s; --col:#c0c0c0;">
-      <div class="pod-name"></div>
-      <div class="pod-score"></div>
-      <div class="pod-medal">🥈</div>
-      <div class="pod-rank">2nd</div>
-      <div class="pod-bar"></div>
-    </div>
-    <!-- 1st place -->
-    <div class="podium-block" id="pod-1" style="--h:150px; --delay:0s; --col:#f0d080;">
-      <div class="pod-name"></div>
-      <div class="pod-score"></div>
-      <div class="pod-medal">🥇</div>
-      <div class="pod-rank">1st</div>
-      <div class="pod-bar"></div>
-    </div>
-    <!-- 3rd place -->
-    <div class="podium-block" id="pod-3" style="--h:80px; --delay:0.7s; --col:#cd7f32;">
-      <div class="pod-name"></div>
-      <div class="pod-score"></div>
-      <div class="pod-medal">🥉</div>
-      <div class="pod-rank">3rd</div>
-      <div class="pod-bar"></div>
-    </div>
-  </div>
-
-  <!-- Other players below podium -->
-  <div id="podium-rest" style="
-    display:flex; gap:20px; z-index:2; flex-wrap:wrap; justify-content:center;
-  "></div>
-
-  <div id="podium-countdown" style="
-    margin-top:24px; font-size:13px; color:rgba(240,232,208,0.4);
-    font-family:'DM Sans',sans-serif; z-index:2;
-  "></div>
-</div>
 </body>
 </html>
