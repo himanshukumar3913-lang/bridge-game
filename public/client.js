@@ -246,11 +246,16 @@ function addNBots(n) {
   const currentCount = gameState?.players?.length || 0;
   const available    = 5 - currentCount;
   const toAdd        = Math.min(n, available);
+  console.log(`addNBots(${n}): currentCount=${currentCount}, available=${available}, toAdd=${toAdd}, myIndex=${myIndex}, connected=${isConnected}`);
+  if (!isConnected) { setMsgBar('Not connected – please wait'); return; }
   for (let i = 0; i < toAdd; i++) {
     const botNum  = currentCount + i + 1;
     const botName = `Bot ${botNum}`;
-    // Stagger slightly so server processes them in order
-    setTimeout(() => socket.emit('add_bot', { name: botName }), i * 150);
+    console.log(`Emitting add_bot for "${botName}" (delay ${i*150}ms)`);
+    setTimeout(() => {
+      console.log(`Sending add_bot: ${botName}`);
+      socket.emit('add_bot', { name: botName });
+    }, i * 150);
   }
 }
 
@@ -293,10 +298,11 @@ function renderLobby(state) {
   const { players } = state;
   const isHost = myIndex === 0;
 
-  document.getElementById('player-count').textContent = players.length;
+  const pcEl = document.getElementById('player-count');
+  const stEl = document.getElementById('lobby-status');
   const allReady = players.length === 5 && players.every(p => !p.disconnected);
-  document.getElementById('lobby-status').textContent =
-    allReady ? 'All 5 ready!' : `${players.length}/5 connected`;
+  if (pcEl) pcEl.textContent = players.length;
+  if (stEl) stEl.textContent = allReady ? 'All 5 ready!' : `${players.length}/5 connected`;
 
   // ── Seat grid ──
   const icons = ['🎩','🎭','🃏','🌟','🎲'];
@@ -325,32 +331,35 @@ function renderLobby(state) {
   }
 
   // ── Bot section (only for host, rendered fresh every time) ──
-  const botSection = document.getElementById('bot-section');
+  const botSection = document.getElementById('bot-section') || document.getElementById('bot-controls');
   const slotsLeft  = 5 - players.length;
 
-  if (isHost && slotsLeft > 0) {
-    // Show how many bots can still be added
-    botSection.innerHTML = `
-      <div style="
-        background:rgba(100,180,255,0.08);
-        border:1px solid rgba(100,180,255,0.2);
-        border-radius:10px;
-        padding:12px 16px;
-        width:100%;max-width:380px;
-        text-align:center;
-      ">
-        <div style="font-size:12px;color:var(--text-dim);margin-bottom:10px">
-          🤖 Add bots to fill empty seats (${slotsLeft} slot${slotsLeft !== 1 ? 's' : ''} left)
-        </div>
-        <div style="display:flex;gap:8px;justify-content:center;flex-wrap:wrap">
-          ${Array.from({length: slotsLeft}, (_, k) => `
-            <button class="btn-bot" onclick="addNBots(${k + 1})">
-              +${k + 1} Bot${k > 0 ? 's' : ''}
-            </button>`).join('')}
-        </div>
-      </div>`;
-  } else {
-    botSection.innerHTML = '';
+  if (botSection) {
+    if (isHost && slotsLeft > 0) {
+      botSection.style.display = 'block';
+      botSection.innerHTML = `
+        <div style="
+          background:rgba(100,180,255,0.08);
+          border:1px solid rgba(100,180,255,0.2);
+          border-radius:10px;
+          padding:12px 16px;
+          width:100%;max-width:380px;
+          text-align:center;
+        ">
+          <div style="font-size:12px;color:var(--text-dim);margin-bottom:10px">
+            🤖 Add bots to fill empty seats (${slotsLeft} slot${slotsLeft !== 1 ? 's' : ''} left)
+          </div>
+          <div style="display:flex;gap:8px;justify-content:center;flex-wrap:wrap">
+            ${Array.from({length: slotsLeft}, (_, k) => `
+              <button class="btn-bot" onclick="addNBots(${k + 1})">
+                +${k + 1} Bot${k > 0 ? 's' : ''}
+              </button>`).join('')}
+          </div>
+        </div>`;
+    } else {
+      botSection.style.display = 'none';
+      botSection.innerHTML = '';
+    }
   }
 
   // ── Buttons ──

@@ -637,13 +637,17 @@ io.on('connection', socket => {
 
   // ── Add bot ──
   socket.on('add_bot',({name})=>{
+    console.log(`add_bot received | roomId=${socket.roomId} | playerIndex=${socket.playerIndex} | name=${name}`);
     const game=games[socket.roomId];
-    if (!game||game.phase!=='waiting'||socket.playerIndex!==0) return;
-    if (game.players.length>=5) { socket.emit('err','Room is full'); return; }
+    if (!game)                      { socket.emit('err','add_bot: no game found for this room');      return; }
+    if (game.phase!=='waiting')     { socket.emit('err','add_bot: game already started');             return; }
+    if (socket.playerIndex!==0)     { socket.emit('err',`add_bot: only host can add bots (your index=${socket.playerIndex})`); return; }
+    if (game.players.length>=5)     { socket.emit('err','add_bot: room is full (5/5)');               return; }
     const botName=name||`Bot ${game.players.length+1}`;
-    game.addBot(botName);
+    const idx=game.addBot(botName);
+    console.log(`Bot "${botName}" added at index ${idx} | room ${socket.roomId} now has ${game.players.length} players`);
     broadcastState(socket.roomId);
-    broadcast(socket.roomId,'msg',{text:`🤖 Bot "${botName}" added to the room`});
+    broadcast(socket.roomId,'msg',{text:`🤖 Bot "${botName}" added`});
   });
 
   // ── Remove bot ──
