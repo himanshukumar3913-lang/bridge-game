@@ -1,0 +1,141 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+  <meta name="theme-color" content="#0d3320">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-title" content="Bridge">
+  <title>Bridge – Card Game</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<!-- ═══════════════════════ LOGIN SCREEN ═══════════════════════ -->
+<div id="login-screen" class="screen active">
+  <div class="login-wrap">
+    <div class="logo-area">
+      <div class="logo-cards">
+        <span class="logo-card" style="--r:-8deg">A♠</span>
+        <span class="logo-card" style="--r:0deg;--z:2">K♥</span>
+        <span class="logo-card" style="--r:8deg">Q♦</span>
+      </div>
+      <h1>Bridge</h1>
+      <p class="tagline">5-Player Real-Time Card Game</p>
+    </div>
+
+    <div class="login-box">
+      <label>Your Name</label>
+      <input id="name-input" type="text" placeholder="Enter your name" maxlength="20" autocomplete="off" autofocus>
+
+      <div class="login-tabs">
+        <button id="tab-create" class="tab active" onclick="switchTab('create')">Create Room</button>
+        <button id="tab-join"   class="tab"        onclick="switchTab('join')">Join Room</button>
+      </div>
+
+      <div id="pane-create" class="tab-pane">
+        <p class="hint">You'll get a 6-letter room code to share with 4 friends.</p>
+        <button class="btn-primary" onclick="createRoom()">Create Room</button>
+      </div>
+
+      <div id="pane-join" class="tab-pane hidden">
+        <label>Room Code</label>
+        <input id="room-input" type="text" placeholder="E.g. AB12CD" maxlength="6"
+          style="text-transform:uppercase" autocomplete="off">
+        <button class="btn-primary" onclick="joinRoom()">Join Game</button>
+      </div>
+
+      <p id="login-error" class="error-msg"></p>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════════════════ LOBBY SCREEN ═══════════════════════ -->
+<div id="lobby-screen" class="screen hidden">
+  <div class="lobby-wrap">
+    <h2>Room Code</h2>
+    <div class="room-code-display" onclick="copyRoomCode()">
+      <span id="room-code-text">------</span>
+      <small>Tap to copy</small>
+    </div>
+    <p class="hint">Share this code with 4 friends. Game needs exactly 5 players.</p>
+
+    <div class="seat-grid" id="seat-grid"></div>
+
+    <div id="lobby-status">Waiting for players… <span id="player-count">1</span>/5</div>
+
+    <button id="start-btn" class="btn-primary hidden" onclick="startGame()">Start Game ▶</button>
+    <p id="lobby-hint" class="hint"></p>
+  </div>
+</div>
+
+<!-- ═══════════════════════ GAME SCREEN ═══════════════════════ -->
+<div id="game-screen" class="screen hidden">
+
+  <div id="players-ring" class="players-ring"></div>
+
+  <div id="info-strip">
+    <span id="info-phase" class="chip"></span>
+    <span id="info-trump" class="chip chip-suit"></span>
+    <span id="info-bid"   class="chip"></span>
+    <span id="info-round" class="chip"></span>
+  </div>
+
+  <div id="msg-bar"></div>
+
+  <div id="center-area">
+    <div id="trick-zone">
+      <div id="trick-title">Table</div>
+      <div id="trick-cards-row"></div>
+    </div>
+    <div id="action-panel"></div>
+  </div>
+
+  <div id="my-hand-zone">
+    <div id="my-hand-label">Your Cards <span id="hand-count"></span></div>
+    <div id="my-cards-row"></div>
+  </div>
+
+</div>
+
+<!-- ═══════════════════════ SCORING SCREEN ═══════════════════════ -->
+<div id="scoring-screen" class="screen hidden">
+  <div class="scoring-wrap">
+    <h2 id="score-title">Round Over</h2>
+    <div id="score-summary"></div>
+    <table id="score-table" class="score-tbl">
+      <thead>
+        <tr>
+          <th>Player</th><th>Trick Pts</th><th>This Round</th><th>Total</th>
+        </tr>
+      </thead>
+      <tbody id="score-body"></tbody>
+    </table>
+    <div id="score-actions">
+      <button id="next-round-btn" class="btn-primary hidden" onclick="nextRound()">Next Round ▶</button>
+      <p id="waiting-next" class="hint hidden">Waiting for host to start next round…</p>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════════════════ ASK MODAL ═══════════════════════ -->
+<div id="ask-modal" class="modal-overlay hidden">
+  <div class="modal-box">
+    <h3>Ask for 2 Cards</h3>
+    <p class="hint">
+      Pick any 2 cards <strong>not in your 10-card hand</strong>.<br>
+      Their holders are your secret teammates.
+    </p>
+    <div id="ask-suits"></div>
+    <div class="modal-footer">
+      <span id="ask-count-label">0 / 2 selected</span>
+      <button id="ask-confirm-btn" class="btn-primary" disabled onclick="confirmAsk()">Confirm Ask</button>
+      <button class="btn-secondary" onclick="closeAskModal()">Cancel</button>
+    </div>
+  </div>
+</div>
+
+<script src="/socket.io/socket.io.js"></script>
+<script src="client.js"></script>
+</body>
+</html>
