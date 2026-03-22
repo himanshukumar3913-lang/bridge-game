@@ -516,46 +516,18 @@ h1 { font-family: var(--font-head); font-size: 44px; color: var(--gold-light); t
 .pod-other strong { color:rgba(240,232,208,.9);display:block;font-size:14px;margin-bottom:2px; }
 
 /* ══════════════════════════════════════════════
-   RESPONSIVE – Portrait phones (≤480px wide)
-   Scrolling is fine in portrait. Just shrink things.
+   PHONE LAYOUT – shared mixin values
+   Applied to BOTH portrait (≤480px) and landscape (≤500px tall)
    ══════════════════════════════════════════════ */
+
+/* ── Portrait phones ── */
 @media (max-width: 480px) and (orientation: portrait) {
-  #play-area { grid-template-columns: 88px 1fr 88px; gap: 4px; padding: 6px 4px; min-height: 220px; }
-  .card { width: 56px; height: 80px; }
-  .card .c-rank { font-size: 20px; }
-  .card .c-suit { font-size: 16px; }
-  .card.trick { width: 48px; height: 70px; }
-  .card.trick .c-rank { font-size: 16px; }
-  .card.trick .c-suit { font-size: 13px; }
-}
 
-@media (max-width: 380px) and (orientation: portrait) {
-  #play-area { grid-template-columns: 76px 1fr 76px; }
-  .suit-grid { grid-template-columns: repeat(2, 1fr); }
-}
-
-@media (max-width: 320px) and (orientation: portrait) {
-  #play-area { grid-template-columns: 1fr; }
-  #teammate-panel, #last-trick-panel { display: none; }
-}
-
-/* ══════════════════════════════════════════════
-   RESPONSIVE – Landscape phones (height ≤ 500px)
-   Strategy: true fixed layout, NO scrolling at all.
-   Every element is a flex child in a column; nothing
-   is position:sticky (that only works with scrollable
-   parents). The .screen overflow-y:auto must also be
-   overridden here or it fights the fixed height.
-   ══════════════════════════════════════════════ */
-@media (orientation: landscape) and (max-height: 500px) {
-
-  /* Override the base .screen overflow so the page cannot scroll */
+  /* Lock to viewport height, no scrolling */
   #game-screen.screen {
     overflow: hidden !important;
   }
-
   #game-screen {
-    /* Fill exactly the visible viewport — 100dvh accounts for browser chrome */
     height: 100dvh;
     min-height: 0;
     overflow: hidden;
@@ -563,46 +535,145 @@ h1 { font-family: var(--font-head); font-size: 44px; color: var(--gold-light); t
     flex-direction: column;
   }
 
-  /* ── Top bar: NO sticky needed — it's the first flex child ── */
+  /* Top bar – static flex child, not sticky */
   .players-ring {
-    position: static;          /* remove sticky — not needed in fixed layout */
-    padding: 3px 6px;
+    position: static;
+    padding: 5px 6px;
     flex-shrink: 0;
   }
   .player-chip {
-    min-width: 52px; padding: 3px 5px;
-    font-size: 10px; border-radius: 6px;
+    min-width: 58px; padding: 4px 5px; font-size: 10px;
   }
-  .player-chip .pchip-name { font-size: 10px; max-width: 50px; }
-  .player-chip .pchip-sub  { display: none; }  /* hide secondary line to save height */
+  .player-chip .pchip-name { font-size: 11px; max-width: 56px; }
+  .player-chip .pchip-sub  { font-size: 9px; }
   .player-chip .pchip-pts  { font-size: 9px; }
 
-  /* ── Info strip: NO sticky ── */
+  /* Info strip – static, no top offset needed */
   #info-strip {
     position: static;
-    padding: 2px 6px; gap: 3px;
+    padding: 3px 6px; gap: 3px;
   }
-  .chip { font-size: 10px; padding: 2px 5px; }
+  .chip { font-size: 10px; padding: 2px 6px; }
 
-  /* ── Message bar: very slim ── */
-  #msg-bar { min-height: 16px; font-size: 10px; padding: 1px 8px; }
+  /* Message bar */
+  #msg-bar { min-height: 18px; font-size: 11px; padding: 2px 8px; }
 
-  /* ── Play area: takes all remaining vertical space, never overflows ── */
+  /* Play area – fills all remaining vertical space */
   #play-area {
     flex: 1;
-    min-height: 0;             /* critical — lets flex shrink below content size */
+    min-height: 0;          /* allow flex to shrink below content size */
     overflow: hidden;
-    grid-template-columns: 62px 1fr 62px;
-    gap: 3px;
-    padding: 3px;
+    grid-template-columns: 72px 1fr 72px;
+    gap: 4px;
+    padding: 4px;
   }
 
-  /* ── Side panels: compact, clip overflow ── */
+  /* Side panels – compact */
   #teammate-panel, #last-trick-panel {
-    padding: 3px;
-    gap: 2px;
+    padding: 4px 4px;
+    gap: 3px;
     overflow: hidden;
     min-height: 0;
+  }
+  .side-title { font-size: 9px; margin-bottom: 2px; letter-spacing: 0; }
+  .teammate-entry { padding: 3px 4px; }
+  .teammate-entry .te-icon  { font-size: 15px; }
+  .teammate-entry .te-name  { font-size: 9px; }
+  .teammate-entry .te-label { font-size: 8px; }
+  #last-trick-winner-label  { font-size: 9px; }
+  .lt-player-label          { font-size: 8px; }
+
+  /* Center – no min-heights */
+  #center-area { min-height: 0; overflow: hidden; }
+  #trick-zone  { min-height: 0; padding: 6px 4px; }
+  #trick-title { font-size: 10px; margin-bottom: 5px; }
+
+  /* Cards in trick zone */
+  .card.trick       { width: 46px; height: 66px; }
+  .card.trick .c-rank { font-size: 16px; }
+  .card.trick .c-suit { font-size: 13px; }
+
+  /* Mini cards in last-trick panel */
+  .card.mini        { width: 30px; height: 44px; }
+  .card.mini .c-rank { font-size: 11px; }
+  .card.mini .c-suit { font-size: 9px; }
+
+  /* Action panel */
+  #action-panel { padding: 6px 10px; }
+  #action-panel p { font-size: 13px; }
+  .bid-val { font-size: 20px; }
+  .suit-grid { gap: 5px; }
+  .suit-opt { padding: 10px 6px; font-size: 12px; }
+  .suit-opt .suit-sym { font-size: 22px; }
+
+  /* Hand cards – slightly smaller to fit 10 in a row */
+  .card {
+    width: 50px;
+    height: 72px;
+  }
+  .card .c-rank { font-size: 18px; }
+  .card .c-suit { font-size: 15px; }
+
+  /* Hand zone – static flex child, naturally last */
+  #my-hand-zone {
+    position: static;
+    padding: 6px 6px;
+    flex-shrink: 0;
+    padding-bottom: max(8px, env(safe-area-inset-bottom));
+  }
+  #my-hand-label { font-size: 10px; margin-bottom: 4px; }
+  #my-cards-row  { gap: 4px; }
+}
+
+/* Extra narrow portrait phones (≤360px wide) */
+@media (max-width: 360px) and (orientation: portrait) {
+  #play-area { grid-template-columns: 60px 1fr 60px; gap: 3px; }
+  .card { width: 44px; height: 64px; }
+  .card .c-rank { font-size: 16px; }
+  .card .c-suit { font-size: 13px; }
+}
+
+/* Very narrow portrait phones (≤320px wide) – hide side panels */
+@media (max-width: 320px) and (orientation: portrait) {
+  #play-area { grid-template-columns: 1fr; }
+  #teammate-panel, #last-trick-panel { display: none; }
+}
+
+/* ══════════════════════════════════════════════
+   LANDSCAPE phones (height ≤ 500px)
+   Same fixed-layout strategy as portrait.
+   ══════════════════════════════════════════════ */
+@media (orientation: landscape) and (max-height: 500px) {
+
+  #game-screen.screen { overflow: hidden !important; }
+  #game-screen {
+    height: 100dvh;
+    min-height: 0;
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+  }
+
+  .players-ring { position: static; padding: 3px 6px; flex-shrink: 0; }
+  .player-chip {
+    min-width: 52px; padding: 3px 5px; font-size: 10px; border-radius: 6px;
+  }
+  .player-chip .pchip-name { font-size: 10px; max-width: 50px; }
+  .player-chip .pchip-sub  { display: none; }
+  .player-chip .pchip-pts  { font-size: 9px; }
+
+  #info-strip { position: static; padding: 2px 6px; gap: 3px; }
+  .chip { font-size: 10px; padding: 2px 5px; }
+
+  #msg-bar { min-height: 16px; font-size: 10px; padding: 1px 8px; }
+
+  #play-area {
+    flex: 1; min-height: 0; overflow: hidden;
+    grid-template-columns: 62px 1fr 62px; gap: 3px; padding: 3px;
+  }
+
+  #teammate-panel, #last-trick-panel {
+    padding: 3px; gap: 2px; overflow: hidden; min-height: 0;
   }
   .side-title { font-size: 9px; margin-bottom: 1px; letter-spacing: 0; }
   .teammate-entry { padding: 2px 3px; }
@@ -615,7 +686,6 @@ h1 { font-family: var(--font-head); font-size: 44px; color: var(--gold-light); t
   .card.mini .c-rank { font-size: 10px; }
   .card.mini .c-suit { font-size: 8px; }
 
-  /* ── Center: shrink to fit, no min-height ── */
   #center-area { min-height: 0; overflow: hidden; }
   #trick-zone  { min-height: 0; padding: 4px; }
   #trick-title { font-size: 10px; margin-bottom: 4px; }
@@ -623,7 +693,6 @@ h1 { font-family: var(--font-head); font-size: 44px; color: var(--gold-light); t
   .card.trick .c-rank { font-size: 14px; }
   .card.trick .c-suit { font-size: 11px; }
 
-  /* ── Action panel: compact ── */
   #action-panel { padding: 4px 10px; }
   #action-panel p { font-size: 12px; }
   .bid-row { gap: 5px; }
@@ -633,16 +702,14 @@ h1 { font-family: var(--font-head); font-size: 44px; color: var(--gold-light); t
   .suit-opt .suit-sym { font-size: 18px; margin-bottom: 1px; }
   .bid-actions button { padding: 7px; font-size: 13px; }
 
-  /* ── Hand cards: smaller so 10 fit across without scrolling ── */
   .card { width: 44px; height: 62px; }
   .card .c-rank { font-size: 16px; }
   .card .c-suit { font-size: 13px; }
   .card:hover   { transform: translateY(-8px); }
 
-  /* ── Hand zone: NOT sticky — last flex child is naturally at the bottom ── */
   #my-hand-zone {
-    position: static;          /* remove sticky — not needed in fixed layout */
-    padding: 4px 6px 6px;
+    position: static;
+    padding: 4px 6px;
     flex-shrink: 0;
     padding-bottom: max(6px, env(safe-area-inset-bottom));
   }
@@ -650,7 +717,7 @@ h1 { font-family: var(--font-head); font-size: 44px; color: var(--gold-light); t
   #my-cards-row  { gap: 3px; }
 }
 
-/* Tablets and desktop in landscape — normal layout, no overrides needed */
+/* Tablets and large devices – normal layout */
 @media (orientation: landscape) and (min-height: 501px) {
   #play-area { grid-template-columns: 110px 1fr 110px; }
 }
