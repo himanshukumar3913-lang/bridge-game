@@ -119,6 +119,8 @@ class Game {
     this.roundScores  = {};
     this.totalScores  = {};
     this.lastGameover = null;
+    this.roundHistory = []; // stores every completed round: [{roundNum, bid, bidder, won, scores}]
+    this.matchRound   = 0;  // counts completed rounds across the whole match
   }
 
   addPlayer(socketId, name) {
@@ -201,6 +203,7 @@ class Game {
     this.leadSuit      = null;
     this.lastTrickWinner = -1;
     this.lastGameover    = null;
+    // ★ Keep roundHistory and totalScores – they accumulate across the whole match
 
     for (let i = 0; i < 5; i++) {
       this.players[i].cards = [];
@@ -391,17 +394,33 @@ class Game {
       this.totalScores[i] = (this.totalScores[i] || 0) + scores[i];
     }
 
-    this.phase = 'scoring';
+    this.phase      = 'scoring';
+    this.matchRound = (this.matchRound || 0) + 1;
+
+    // Record this round in the match history
+    this.roundHistory.push({
+      roundNum:   this.matchRound,
+      bid,
+      bidderIdx:  bidder,
+      bidderName: this.players[bidder].name,
+      won,
+      teamPts,
+      teammates:  [...this.teammates],
+      scores:     { ...scores },           // per-player score this round
+      totals:     { ...this.totalScores }, // running totals after this round
+    });
 
     const gameoverData = {
-      gameOver:    true,
+      gameOver:     true,
       bid, bidder,
-      bidderName:  this.players[bidder].name,
+      bidderName:   this.players[bidder].name,
       teamPts, won,
-      teammates:   this.teammates,
-      roundScores: { ...this.roundScores },
-      totalScores: { ...this.totalScores },
-      trickPts:    { ...this.trickPts },
+      teammates:    this.teammates,
+      roundScores:  { ...this.roundScores },
+      totalScores:  { ...this.totalScores },
+      trickPts:     { ...this.trickPts },
+      roundHistory: this.roundHistory,     // ★ full history for the scoring table
+      matchRound:   this.matchRound,
     };
 
     this.lastGameover = gameoverData;
@@ -438,6 +457,8 @@ class Game {
       round:           this.round,
       leadSuit:        this.leadSuit,
       lastTrickWinner: this.lastTrickWinner,
+      roundHistory:    this.roundHistory,
+      matchRound:      this.matchRound || 0,
     };
   }
 }
@@ -590,6 +611,43 @@ io.on('connection', socket => {
     game.startRound();
     broadcastState(socket.roomId);
     broadcast(socket.roomId, 'msg', { text: 'New round! Dealer rotated. Bidding begins.' });
+  });
+
+  // ── Host cancels the entire game – shows podium then sends everyone to login ──
+  socket.on('cancel_game', () => {
+    const game = games[socket.roomId];
+    if (!game || socket.playerIndex !== 0) return;
+
+    const roomId = socket.roomId;
+
+    // Build final standings sorted by total score
+    const standings = game.players.map((p, i) => ({
+      name:       p.name,
+      totalScore: game.totalScores[i] || 0,
+      index:      i,
+    })).sort((a, b) => b.totalScore - a.totalScore);
+
+    // Broadcast podium – clients show 5-second animation then go to login
+    broadcast(roomId, 'podium', {
+      standings,
+      roundHistory: game.roundHistory,
+      totalScores:  { ...game.totalScores },
+      matchRounds:  game.matchRound || 0,
+      playerNames:  game.players.map(p => p.name),
+    });
+
+    // Clean up after 7 seconds (gives clients time to animate + redirect)
+    setTimeout(() => {
+      const sockets = io.sockets.adapter.rooms.get(roomId);
+      if (sockets) {
+        for (const sid of sockets) {
+          const s = io.sockets.sockets.get(sid);
+          if (s) { s.leave(roomId); s.roomId = undefined; s.playerIndex = undefined; }
+        }
+      }
+      delete games[roomId];
+      console.log(`Room ${roomId} ended – podium shown`);
+    }, 7000);
   });
 
   socket.on('disconnect', () => {

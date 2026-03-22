@@ -72,8 +72,9 @@
 
     <div id="lobby-status">Waiting for players… <span id="player-count">1</span>/5</div>
 
-    <button id="start-btn" class="btn-primary hidden" onclick="startGame()">Start Game ▶</button>
-    <button id="leave-btn" class="btn-leave hidden"   onclick="leaveRoom()">🚪 Leave Room</button>
+    <button id="start-btn"  class="btn-primary hidden" onclick="startGame()">Start Game ▶</button>
+    <button id="leave-btn"  class="btn-leave hidden"   onclick="leaveRoom()">🚪 Leave Room</button>
+    <button id="cancel-lobby-btn" class="btn-leave hidden" onclick="cancelGame()">✕ Cancel Room</button>
     <p id="lobby-hint" class="hint"></p>
   </div>
 </div>
@@ -88,6 +89,7 @@
     <span id="info-trump" class="chip chip-suit"></span>
     <span id="info-bid"   class="chip"></span>
     <span id="info-round" class="chip"></span>
+    <button id="cancel-game-btn" class="btn-cancel-game hidden" onclick="cancelGame()">✕ Cancel Game</button>
   </div>
 
   <div id="msg-bar"></div>
@@ -113,15 +115,12 @@
     <h2 id="score-title">Round Over</h2>
     <div id="score-summary"></div>
     <table id="score-table" class="score-tbl">
-      <thead>
-        <tr>
-          <th>Player</th><th>Trick Pts</th><th>This Round</th><th>Total</th>
-        </tr>
-      </thead>
+      <thead><tr><th style="text-align:left">Player</th><th>Total</th></tr></thead>
       <tbody id="score-body"></tbody>
     </table>
     <div id="score-actions">
       <button id="next-round-btn" class="btn-primary hidden" onclick="nextRound()">Next Round ▶</button>
+      <button id="cancel-score-btn" class="btn-leave hidden" onclick="cancelGame()">✕ Cancel &amp; Return to Start</button>
       <p id="waiting-next" class="hint hidden">Waiting for host to start next round…</p>
     </div>
   </div>
@@ -146,5 +145,66 @@
 
 <script src="/socket.io/socket.io.js"></script>
 <script src="client.js"></script>
+
+<!-- ═══════════════════════ PODIUM SCREEN ═══════════════════════ -->
+<div id="podium-screen" class="hidden" style="
+  position:fixed; inset:0; z-index:999;
+  background: linear-gradient(160deg, #0a1a2e 0%, #0d3320 60%, #1a0a2e 100%);
+  display:flex; flex-direction:column; align-items:center; justify-content:center;
+  font-family:'Playfair Display',Georgia,serif;
+  overflow:hidden;
+">
+  <!-- Firework canvases -->
+  <canvas id="firework-canvas" style="position:absolute;inset:0;pointer-events:none;"></canvas>
+
+  <div id="podium-title" style="
+    font-size:32px; color:#f0d080; text-shadow:0 0 30px rgba(240,208,80,0.6);
+    margin-bottom:8px; letter-spacing:2px; text-align:center; z-index:2;
+  ">🏆 Final Standings</div>
+
+  <div id="podium-rounds" style="
+    font-size:13px; color:rgba(240,232,208,0.5); margin-bottom:32px; z-index:2;
+  "></div>
+
+  <!-- Podium blocks -->
+  <div id="podium-stage" style="
+    display:flex; align-items:flex-end; gap:12px; z-index:2; margin-bottom:28px;
+  ">
+    <!-- 2nd place -->
+    <div class="podium-block" id="pod-2" style="--h:110px; --delay:0.4s; --col:#c0c0c0;">
+      <div class="pod-name"></div>
+      <div class="pod-score"></div>
+      <div class="pod-medal">🥈</div>
+      <div class="pod-rank">2nd</div>
+      <div class="pod-bar"></div>
+    </div>
+    <!-- 1st place -->
+    <div class="podium-block" id="pod-1" style="--h:150px; --delay:0s; --col:#f0d080;">
+      <div class="pod-name"></div>
+      <div class="pod-score"></div>
+      <div class="pod-medal">🥇</div>
+      <div class="pod-rank">1st</div>
+      <div class="pod-bar"></div>
+    </div>
+    <!-- 3rd place -->
+    <div class="podium-block" id="pod-3" style="--h:80px; --delay:0.7s; --col:#cd7f32;">
+      <div class="pod-name"></div>
+      <div class="pod-score"></div>
+      <div class="pod-medal">🥉</div>
+      <div class="pod-rank">3rd</div>
+      <div class="pod-bar"></div>
+    </div>
+  </div>
+
+  <!-- Other players below podium -->
+  <div id="podium-rest" style="
+    display:flex; gap:20px; z-index:2; flex-wrap:wrap; justify-content:center;
+  "></div>
+
+  <div id="podium-countdown" style="
+    margin-top:24px; font-size:13px; color:rgba(240,232,208,0.4);
+    font-family:'DM Sans',sans-serif; z-index:2;
+  "></div>
+</div>
 </body>
 </html>

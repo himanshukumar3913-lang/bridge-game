@@ -318,12 +318,15 @@ function renderLobby(state) {
     grid.appendChild(seat);
   }
 
-  const startBtn  = document.getElementById('start-btn');
-  const leaveBtn  = document.getElementById('leave-btn');
-  const hint      = document.getElementById('lobby-hint');
+  const startBtn       = document.getElementById('start-btn');
+  const leaveBtn       = document.getElementById('leave-btn');
+  const cancelLobbyBtn = document.getElementById('cancel-lobby-btn');
+  const hint           = document.getElementById('lobby-hint');
 
   // Leave button: visible for all non-host players
-  if (leaveBtn) leaveBtn.classList.toggle('hidden', myIndex === 0);
+  if (leaveBtn)       leaveBtn.classList.toggle('hidden', myIndex === 0);
+  // Cancel room button: visible only for host
+  if (cancelLobbyBtn) cancelLobbyBtn.classList.toggle('hidden', myIndex !== 0);
 
   if (myIndex === 0) {
     if (allReady) {
@@ -398,6 +401,10 @@ function renderInfoStrip(state) {
   } else {
     document.getElementById('info-round').textContent = '';
   }
+
+  // Show cancel button only for the host
+  const cancelBtn = document.getElementById('cancel-game-btn');
+  if (cancelBtn) cancelBtn.classList.toggle('hidden', myIndex !== 0);
 }
 
 function renderTrickZone(state) {
@@ -645,46 +652,229 @@ function showScoringScreen(data) {
   document.getElementById('score-title').textContent =
     data.won ? '🏆 Bidder\'s Team Won!' : '❌ Bidder\'s Team Lost!';
 
+  // ── Round summary banner ──
   const bidderName = escHtml(data.bidderName);
   const teamNames  = (data.teammates || [])
     .map(i => escHtml(gameState?.players[i]?.name || `Player ${i + 1}`))
     .join(' & ') || 'nobody';
 
   document.getElementById('score-summary').innerHTML = `
-    <strong>${bidderName}</strong> bid <strong>${data.bid}</strong> pts.<br>
-    Teammates: <strong>${teamNames}</strong><br>
-    Team's trick points: <strong>${data.teamPts}</strong> / ${data.bid} needed.<br>
-    <span class="${data.won ? 'won' : 'lost'}">
-      ${data.won ? '✅ Bid successful!' : '❌ Bid failed!'}
+    <strong>Round ${data.matchRound || '?'}</strong> &nbsp;|&nbsp;
+    <strong>${bidderName}</strong> bid <strong>${data.bid}</strong>
+    &nbsp;|&nbsp; Team: <strong>${teamNames}</strong>
+    &nbsp;|&nbsp; Got <strong>${data.teamPts}</strong>/${data.bid}
+    &nbsp;&nbsp;<span class="${data.won ? 'won' : 'lost'}">
+      ${data.won ? '✅ Bid made!' : '❌ Bid failed!'}
     </span>`;
 
+  // ── Full history table – one column per round ──
+  const history   = data.roundHistory || [];
+  const players   = gameState?.players || [];
+  const numRounds = history.length;
+
+  // Rebuild dynamic header
+  const thead = document.querySelector('#score-table thead tr');
+  if (thead) {
+    let headCols = `<th style="text-align:left">Player</th>`;
+    for (let r = 0; r < numRounds; r++) headCols += `<th>R${r + 1}</th>`;
+    headCols += `<th style="border-left:1px solid rgba(255,255,255,0.12)">Total</th>`;
+    thead.innerHTML = headCols;
+  }
+
+  // Build body rows
   const tbody = document.getElementById('score-body');
-  tbody.innerHTML = (gameState?.players || []).map((p, i) => {
-    const rs   = data.roundScores?.[i] ?? 0;
-    const ts   = data.totalScores?.[i] ?? 0;
-    const tp   = data.trickPts?.[i]    ?? 0;
-    const role = i === data.bidder ? '🎯' : (data.teammates?.includes(i) ? '🤝' : '⚔️');
-    const rsCls = rs > 0 ? 'positive' : rs < 0 ? 'negative' : 'zero';
-    return `<tr class="${i === myIndex ? 'me-row' : ''}">
-      <td><span style="margin-right:4px">${role}</span>${escHtml(p.name)}${i === myIndex ? ' <em>(you)</em>' : ''}</td>
-      <td>${tp}</td>
-      <td class="${rsCls}">${rs >= 0 ? '+' : ''}${rs}</td>
-      <td>${ts}</td>
-    </tr>`;
+  tbody.innerHTML = players.map((p, i) => {
+    const isMe = i === myIndex;
+    let row = `<tr class="${isMe ? 'me-row' : ''}">`;
+    row += `<td style="text-align:left;font-weight:600">${escHtml(p.name)}${isMe ? ' <em style="font-weight:400">(you)</em>' : ''}</td>`;
+
+    for (const rnd of history) {
+      const sc = rnd.scores?.[i] ?? 0;
+      const cls = sc > 0 ? 'positive' : sc < 0 ? 'negative' : 'zero';
+      const isLatest = rnd.roundNum === numRounds;
+      row += `<td class="${cls}" style="${isLatest ? 'background:rgba(255,255,255,0.06)' : ''}">${sc >= 0 ? '+' : ''}${sc}</td>`;
+    }
+
+    const total = data.totalScores?.[i] ?? 0;
+    const tCls  = total > 0 ? 'positive' : total < 0 ? 'negative' : 'zero';
+    row += `<td class="${tCls}" style="font-weight:700;border-left:1px solid rgba(255,255,255,0.12)">${total >= 0 ? '+' : ''}${total}</td>`;
+    row += '</tr>';
+    return row;
   }).join('');
 
-  const nextBtn    = document.getElementById('next-round-btn');
-  const waitingMsg = document.getElementById('waiting-next');
+  // ── Host buttons ──
+  const nextBtn        = document.getElementById('next-round-btn');
+  const cancelScoreBtn = document.getElementById('cancel-score-btn');
+  const waitingMsg     = document.getElementById('waiting-next');
+
   if (myIndex === 0) {
     nextBtn.classList.remove('hidden');
+    cancelScoreBtn.classList.remove('hidden');
     waitingMsg.classList.add('hidden');
   } else {
     nextBtn.classList.add('hidden');
+    cancelScoreBtn.classList.add('hidden');
     waitingMsg.classList.remove('hidden');
   }
 }
 
 function nextRound() { socket.emit('next'); }
+
+function cancelGame() {
+  const rounds = gameState ? (gameState.matchRound || 0) : 0;
+  const msg = rounds > 0
+    ? `End the match after ${rounds} round(s) and show the final standings?`
+    : 'Cancel the game and return everyone to the start page?';
+  if (!confirm(msg)) return;
+  socket.emit('cancel_game');
+  // Host sees podium too – server will broadcast it to all including host
+}
+
+// ── Podium screen – shown when host ends the game ──
+socket.on('podium', (data) => {
+  showPodium(data);
+});
+
+function showPodium(data) {
+  // Hide everything else, show podium
+  document.querySelectorAll('.screen').forEach(s => s.classList.add('hidden'));
+  const screen = document.getElementById('podium-screen');
+  screen.classList.remove('hidden');
+
+  const standings   = data.standings   || [];
+  const matchRounds = data.matchRounds || 0;
+
+  document.getElementById('podium-rounds').textContent =
+    matchRounds > 0 ? `After ${matchRounds} round${matchRounds !== 1 ? 's' : ''}` : '';
+
+  // Fill podium blocks (positions: 1st, 2nd, 3rd)
+  const positions = [1, 2, 3];
+  positions.forEach(pos => {
+    const player = standings[pos - 1];
+    const block  = document.getElementById(`pod-${pos}`);
+    if (!block) return;
+    if (player) {
+      block.querySelector('.pod-name').textContent  = player.name;
+      block.querySelector('.pod-score').textContent = (player.totalScore >= 0 ? '+' : '') + player.totalScore + ' pts';
+      block.style.display = 'flex';
+    } else {
+      block.style.display = 'none';
+    }
+  });
+
+  // Fill 4th and 5th
+  const rest = document.getElementById('podium-rest');
+  rest.innerHTML = '';
+  for (let i = 3; i < standings.length; i++) {
+    const p   = standings[i];
+    const div = document.createElement('div');
+    div.className = 'pod-other';
+    div.innerHTML = `<strong>${escHtml(p.name)}</strong>${(p.totalScore >= 0 ? '+' : '') + p.totalScore} pts`;
+    rest.appendChild(div);
+  }
+
+  // Start fireworks
+  startFireworks();
+
+  // Countdown and redirect
+  let secs = 5;
+  const cdEl = document.getElementById('podium-countdown');
+  cdEl.textContent = `Returning to start in ${secs}s…`;
+  const interval = setInterval(() => {
+    secs--;
+    if (secs <= 0) {
+      clearInterval(interval);
+      stopFireworks();
+      _resetToStart('Thanks for playing! Start a new game anytime.');
+    } else {
+      cdEl.textContent = `Returning to start in ${secs}s…`;
+    }
+  }, 1000);
+}
+
+// ── Fireworks engine (canvas-based) ──
+let fwAnimId   = null;
+let fwParticles = [];
+
+function startFireworks() {
+  const canvas = document.getElementById('firework-canvas');
+  if (!canvas) return;
+  const ctx = canvas.getContext('2d');
+  canvas.width  = window.innerWidth;
+  canvas.height = window.innerHeight;
+
+  const COLORS = ['#f0d080','#ff6b6b','#6bffb8','#6bb8ff','#ff6bf0','#ffb86b','#ffffff'];
+
+  function spawnBurst() {
+    const x = Math.random() * canvas.width;
+    const y = Math.random() * canvas.height * 0.7;
+    const color = COLORS[Math.floor(Math.random() * COLORS.length)];
+    for (let i = 0; i < 55; i++) {
+      const angle = (Math.PI * 2 / 55) * i;
+      const speed = 2 + Math.random() * 4;
+      fwParticles.push({
+        x, y,
+        vx: Math.cos(angle) * speed,
+        vy: Math.sin(angle) * speed,
+        alpha: 1,
+        color,
+        size: 2 + Math.random() * 2,
+        decay: 0.012 + Math.random() * 0.008,
+      });
+    }
+  }
+
+  let frame = 0;
+  function animate() {
+    fwAnimId = requestAnimationFrame(animate);
+    ctx.fillStyle = 'rgba(0,0,0,0.18)';
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+    // Spawn a new burst every ~40 frames
+    frame++;
+    if (frame % 40 === 0) spawnBurst();
+    // Extra champagne burst at start
+    if (frame === 1) { spawnBurst(); spawnBurst(); spawnBurst(); }
+
+    fwParticles = fwParticles.filter(p => p.alpha > 0.02);
+    for (const p of fwParticles) {
+      p.x     += p.vx;
+      p.y     += p.vy;
+      p.vy    += 0.07; // gravity
+      p.alpha -= p.decay;
+      p.vx    *= 0.98;
+      ctx.globalAlpha = Math.max(0, p.alpha);
+      ctx.fillStyle   = p.color;
+      ctx.beginPath();
+      ctx.arc(p.x, p.y, p.size, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    ctx.globalAlpha = 1;
+  }
+
+  spawnBurst();
+  animate();
+}
+
+function stopFireworks() {
+  if (fwAnimId) { cancelAnimationFrame(fwAnimId); fwAnimId = null; }
+  fwParticles = [];
+  const canvas = document.getElementById('firework-canvas');
+  if (canvas) canvas.getContext('2d').clearRect(0, 0, canvas.width, canvas.height);
+}
+
+function _resetToStart(message) {
+  stopFireworks();
+  clearSession();
+  myIndex   = -1;
+  myRoomId  = '';
+  myName    = '';
+  gameState = null;
+  document.getElementById('ask-modal').classList.add('hidden');
+  document.getElementById('podium-screen').classList.add('hidden');
+  showScreen('login-screen');
+  document.getElementById('login-error').textContent = message || 'Game over.';
+}
 
 // ══════════════════════════════════════════════════════
 //  UTILITIES
