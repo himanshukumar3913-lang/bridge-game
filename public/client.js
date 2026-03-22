@@ -238,9 +238,21 @@ document.getElementById('name-input').addEventListener('keydown',e=>{
 /* ══════════════════════════════════════════════
    LOBBY
    ══════════════════════════════════════════════ */
-function copyRoomCode() { navigator.clipboard?.writeText(myRoomId).then(()=>setMsgBar('Code copied!')); }
+function copyRoomCode() { navigator.clipboard?.writeText(myRoomId).then(() => setMsgBar('Code copied!')); }
 function startGame()    { socket.emit('start'); playSound('shuffle'); }
-function addBot()       { socket.emit('add_bot',{name:`Bot${(gameState?.players?.length||0)+1}`}); }
+
+// Add N bots one by one (server handles each add_bot individually)
+function addNBots(n) {
+  const currentCount = gameState?.players?.length || 0;
+  const available    = 5 - currentCount;
+  const toAdd        = Math.min(n, available);
+  for (let i = 0; i < toAdd; i++) {
+    const botNum  = currentCount + i + 1;
+    const botName = `Bot ${botNum}`;
+    // Stagger slightly so server processes them in order
+    setTimeout(() => socket.emit('add_bot', { name: botName }), i * 150);
+  }
+}
 
 function leaveRoom() {
   if (!confirm('Leave the room?')) return;
@@ -278,48 +290,89 @@ function renderState(state) {
 /* ── Lobby ── */
 function renderLobby(state) {
   showScreen('lobby-screen');
-  const {players}=state;
-  document.getElementById('player-count').textContent=players.length;
-  const allReady=players.length===5&&players.every(p=>!p.disconnected);
-  document.getElementById('lobby-status').textContent=allReady?'All 5 ready!': `${players.length}/5 connected`;
+  const { players } = state;
+  const isHost = myIndex === 0;
 
-  const icons=['🎩','🎭','🃏','🌟','🎲'];
-  const grid=document.getElementById('seat-grid'); grid.innerHTML='';
-  for (let i=0;i<5;i++) {
-    const p=players[i]; const seat=document.createElement('div');
-    seat.className='seat'+(p?' filled':'')+(p?.disconnected?' dc':'');
-    const isBot=p?.isBot;
-    const hostRemoveBtn=(p&&myIndex===0&&i!==0&&!isBot)?`<button class="btn-remove" onclick="removePlayer(${i})">✕</button>`:'';
-    const botRemoveBtn=(p&&myIndex===0&&isBot)?`<button class="btn-remove" onclick="removeBot(${i})">✕ Bot</button>`:'';
-    seat.innerHTML=p
-      ?`<span class="seat-icon">${p.disconnected?'⚡':isBot?'🤖':icons[i]}</span>
-        <span class="seat-name">${escHtml(p.name)}</span>
-        ${i===0?'<span class="seat-tag">HOST</span>':''}
-        ${i===myIndex?'<span class="seat-tag">YOU</span>':''}
-        ${isBot?'<span class="seat-tag" style="color:#88ccff">BOT</span>':''}
-        ${p.disconnected?'<span class="seat-tag" style="color:#ff9900">Away</span>':''}
-        ${hostRemoveBtn}${botRemoveBtn}`
-      :`<span class="seat-icon" style="opacity:.3">···</span><span class="seat-name" style="opacity:.3">Empty</span>`;
+  document.getElementById('player-count').textContent = players.length;
+  const allReady = players.length === 5 && players.every(p => !p.disconnected);
+  document.getElementById('lobby-status').textContent =
+    allReady ? 'All 5 ready!' : `${players.length}/5 connected`;
+
+  // ── Seat grid ──
+  const icons = ['🎩','🎭','🃏','🌟','🎲'];
+  const grid  = document.getElementById('seat-grid');
+  grid.innerHTML = '';
+  for (let i = 0; i < 5; i++) {
+    const p    = players[i];
+    const seat = document.createElement('div');
+    seat.className = 'seat' + (p ? ' filled' : '') + (p?.disconnected ? ' dc' : '');
+    const isBot = p?.isBot;
+    const hostRemoveBtn = (p && isHost && i !== 0 && !isBot)
+      ? `<button class="btn-remove" onclick="removePlayer(${i})">✕</button>` : '';
+    const botRemoveBtn = (p && isHost && isBot)
+      ? `<button class="btn-remove" onclick="removeBot(${i})">✕ Bot</button>` : '';
+    seat.innerHTML = p
+      ? `<span class="seat-icon">${p.disconnected ? '⚡' : isBot ? '🤖' : icons[i]}</span>
+         <span class="seat-name">${escHtml(p.name)}</span>
+         ${i === 0       ? '<span class="seat-tag">HOST</span>' : ''}
+         ${i === myIndex ? '<span class="seat-tag">YOU</span>'  : ''}
+         ${isBot ? '<span class="seat-tag" style="color:#88ccff">BOT</span>' : ''}
+         ${p.disconnected ? '<span class="seat-tag" style="color:#ff9900">Away</span>' : ''}
+         ${hostRemoveBtn}${botRemoveBtn}`
+      : `<span class="seat-icon" style="opacity:.3">···</span>
+         <span class="seat-name" style="opacity:.3">Empty</span>`;
     grid.appendChild(seat);
   }
 
-  const startBtn=document.getElementById('start-btn');
-  const leaveBtn=document.getElementById('leave-btn');
-  const cancelLobbyBtn=document.getElementById('cancel-lobby-btn');
-  const botControls=document.getElementById('bot-controls');
-  const hint=document.getElementById('lobby-hint');
+  // ── Bot section (only for host, rendered fresh every time) ──
+  const botSection = document.getElementById('bot-section');
+  const slotsLeft  = 5 - players.length;
 
-  if (leaveBtn) leaveBtn.classList.toggle('hidden',myIndex===0);
-  if (cancelLobbyBtn) cancelLobbyBtn.classList.toggle('hidden',myIndex!==0);
-  // Use style.display directly — avoids any CSS !important conflict with .hidden class
-  if (botControls) botControls.style.display=(myIndex===0&&players.length<5)?'flex':'none';
+  if (isHost && slotsLeft > 0) {
+    // Show how many bots can still be added
+    botSection.innerHTML = `
+      <div style="
+        background:rgba(100,180,255,0.08);
+        border:1px solid rgba(100,180,255,0.2);
+        border-radius:10px;
+        padding:12px 16px;
+        width:100%;max-width:380px;
+        text-align:center;
+      ">
+        <div style="font-size:12px;color:var(--text-dim);margin-bottom:10px">
+          🤖 Add bots to fill empty seats (${slotsLeft} slot${slotsLeft !== 1 ? 's' : ''} left)
+        </div>
+        <div style="display:flex;gap:8px;justify-content:center;flex-wrap:wrap">
+          ${Array.from({length: slotsLeft}, (_, k) => `
+            <button class="btn-bot" onclick="addNBots(${k + 1})">
+              +${k + 1} Bot${k > 0 ? 's' : ''}
+            </button>`).join('')}
+        </div>
+      </div>`;
+  } else {
+    botSection.innerHTML = '';
+  }
 
-  if (myIndex===0) {
-    if (allReady) { startBtn.classList.remove('hidden'); hint.textContent=''; }
-    else { startBtn.classList.add('hidden'); hint.textContent=`Need ${5-players.length} more player(s) or bots.`; }
+  // ── Buttons ──
+  const startBtn      = document.getElementById('start-btn');
+  const leaveBtn      = document.getElementById('leave-btn');
+  const cancelLobbyBtn = document.getElementById('cancel-lobby-btn');
+  const hint          = document.getElementById('lobby-hint');
+
+  if (leaveBtn)        leaveBtn.classList.toggle('hidden', isHost);
+  if (cancelLobbyBtn)  cancelLobbyBtn.classList.toggle('hidden', !isHost);
+
+  if (isHost) {
+    if (allReady) {
+      startBtn.classList.remove('hidden');
+      hint.textContent = '';
+    } else {
+      startBtn.classList.add('hidden');
+      hint.textContent = `${slotsLeft} empty slot${slotsLeft !== 1 ? 's' : ''} – add a player or bot to fill them.`;
+    }
   } else {
     startBtn.classList.add('hidden');
-    hint.textContent=allReady?'Waiting for host to start…':`Waiting for ${5-players.length} more…`;
+    hint.textContent = allReady ? 'Waiting for host to start…' : `${slotsLeft} more needed…`;
   }
 }
 

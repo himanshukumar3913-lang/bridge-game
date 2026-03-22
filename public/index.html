@@ -58,10 +58,10 @@
     <p class="hint">Share this code with friends. Need exactly 5 players/bots.</p>
     <div class="seat-grid" id="seat-grid"></div>
     <div id="lobby-status">Waiting… <span id="player-count">1</span>/5</div>
-    <!-- Host bot controls – visibility controlled entirely by JS -->
-    <div id="bot-controls" style="display:none;gap:8px;flex-wrap:wrap;justify-content:center;width:100%;max-width:380px">
-      <button class="btn-bot" onclick="addBot()">🤖 Add Bot</button>
-    </div>
+
+    <!-- Bot management – rendered fresh by JS every state update -->
+    <div id="bot-section"></div>
+
     <button id="start-btn"        class="btn-primary hidden" onclick="startGame()">Start Game ▶</button>
     <button id="leave-btn"        class="btn-leave   hidden" onclick="leaveRoom()">🚪 Leave Room</button>
     <button id="cancel-lobby-btn" class="btn-leave   hidden" onclick="cancelGame()">✕ Cancel Room</button>
