@@ -103,7 +103,7 @@ socket.on('connect', () => {
   setConnectionStatus('connected');
   document.getElementById('login-error').textContent = '';
 
-  // Auto-reconnect if we have a saved session
+  // Auto-reconnect if we have a saved session — only here, not on 'load'
   const session = loadSession();
   if (session?.roomId && session?.name && session?.playerIndex !== undefined) {
     document.getElementById('login-error').textContent = `Reconnecting as "${session.name}"…`;
@@ -135,7 +135,7 @@ socket.on('joined', ({ roomId, playerIndex, name }) => {
   myIndex  = playerIndex;
   myRoomId = roomId;
   myName   = name || myName;
-  saveSession();
+  saveSession(); // always save the latest index from server — keeps localStorage accurate
   document.getElementById('room-code-text').textContent = roomId;
   document.getElementById('login-error').textContent = '';
   showScreen('lobby-screen');
@@ -144,7 +144,22 @@ socket.on('joined', ({ roomId, playerIndex, name }) => {
 socket.on('err', msg => {
   setMsgBar(msg);
   document.getElementById('login-error').textContent = msg;
-  if (msg.includes('Session expired') || msg.includes('Could not restore')) clearSession();
+
+  // If session restore failed, clear stale data and pre-fill the join form
+  if (msg.includes('Session expired') || msg.includes('Could not restore')) {
+    const session = loadSession();
+    clearSession();
+    myIndex = -1; myRoomId = ''; myName = '';
+    // Pre-fill login form so user can rejoin in one click
+    if (session?.name) {
+      document.getElementById('name-input').value  = session.name;
+      document.getElementById('room-input').value  = session.roomId || '';
+      // Switch to Join tab automatically
+      switchTab('join');
+      document.getElementById('login-error').textContent =
+        'Session expired. Your name and room code are filled in – just click Join Game.';
+    }
+  }
 });
 
 socket.on('state', state => {

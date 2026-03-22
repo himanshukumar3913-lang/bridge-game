@@ -133,12 +133,22 @@ class Game {
   }
 
   reconnectPlayer(socketId, name, playerIndex) {
-    const p = this.players[playerIndex];
-    if (!p || p.name !== name) return -1;
+    // First try the stored index (fast path)
+    let idx = -1;
+    if (playerIndex >= 0 && playerIndex < this.players.length) {
+      if (this.players[playerIndex].name === name) idx = playerIndex;
+    }
+    // Fallback: search by name in case index shifted (e.g. after a removal)
+    if (idx === -1) {
+      idx = this.players.findIndex(p => p.name === name);
+    }
+    if (idx === -1) return -1;
+
+    const p        = this.players[idx];
     p.socketId     = socketId;
     p.disconnected = false;
     p.lastSeen     = Date.now();
-    return playerIndex;
+    return idx;
   }
 
   markDisconnected(playerIndex) {
