@@ -529,13 +529,14 @@ function scheduleBotBid(roomId) {
     if (!games[roomId]) return;
     const g=games[roomId];
     if (g.phase!=='bidding'||!g.players[g.currentBidder]?.isBot) return;
-    const amount=botChooseBid(g.players[g.currentBidder].cards, g.highestBid);
-    const err=g.placeBid(g.currentBidder, amount);
+    const botIdx=g.currentBidder;
+    const botName=g.players[botIdx]?.name||'Bot'; // capture BEFORE placeBid shifts currentBidder
+    const amount=botChooseBid(g.players[botIdx].cards, g.highestBid);
+    const err=g.placeBid(botIdx, amount);
     if (err) return;
     const action=amount==='pass'?'✋ passed':`bid ${amount}`;
-    broadcast(roomId,'msg',{text:`🤖 ${g.players[g.currentBidder]?.name||'Bot'} ${action}`});
+    broadcast(roomId,'msg',{text:`🤖 ${botName} ${action}`});
     broadcastState(roomId);
-    // If phase changed to trump and winner is bot, handle that
     if (g.phase==='trump'&&g.players[g.highestBidder]?.isBot) scheduleBotTrump(roomId);
     else scheduleBotBid(roomId);
   }, 800);
@@ -639,9 +640,10 @@ io.on('connection', socket => {
     const game=games[socket.roomId];
     if (!game||game.phase!=='waiting'||socket.playerIndex!==0) return;
     if (game.players.length>=5) { socket.emit('err','Room is full'); return; }
-    game.addBot(name||`Bot ${game.players.length}`);
+    const botName=name||`Bot ${game.players.length+1}`;
+    game.addBot(botName);
     broadcastState(socket.roomId);
-    broadcast(socket.roomId,'msg',{text:`🤖 Bot "${name||`Bot ${game.players.length}`}" added`});
+    broadcast(socket.roomId,'msg',{text:`🤖 Bot "${botName}" added to the room`});
   });
 
   // ── Remove bot ──
@@ -724,19 +726,15 @@ io.on('connection', socket => {
     const result=game.playCard(socket.playerIndex,cardId);
     if (typeof result==='string') { socket.emit('err',result); return; }
     broadcastState(socket.roomId);
-    if (result?.cardPlayed) {
-      if (result.trumpEvent)       broadcast(socket.roomId,'trump_event',result.trumpEvent);
-      if (result.higherTrumpEvent) broadcast(socket.roomId,'trump_event',result.higherTrumpEvent);
-      scheduleBotTurn(socket.roomId);
-    }
+    // Broadcast trump events (can happen mid-trick or on trick completion)
+    if (result?.trumpEvent)       broadcast(socket.roomId,'trump_event',result.trumpEvent);
+    if (result?.higherTrumpEvent) broadcast(socket.roomId,'trump_event',result.higherTrumpEvent);
     if (result?.trickDone) {
       broadcast(socket.roomId,'trick',result);
-      if (result.trumpEvent)       broadcast(socket.roomId,'trump_event',result.trumpEvent);
-      if (result.higherTrumpEvent) broadcast(socket.roomId,'trump_event',result.higherTrumpEvent);
-      if (result.earlyLoss)        broadcast(socket.roomId,'early_loss',result.earlyLoss);
+      if (result.earlyLoss) broadcast(socket.roomId,'early_loss',result.earlyLoss);
     }
     if (result?.gameOver) broadcast(socket.roomId,'gameover',result);
-    else scheduleBotTurn(socket.roomId);
+    else scheduleBotTurn(socket.roomId); // single call – no double-fire
   });
 
   // ── Next round ──

@@ -311,8 +311,8 @@ function renderLobby(state) {
 
   if (leaveBtn) leaveBtn.classList.toggle('hidden',myIndex===0);
   if (cancelLobbyBtn) cancelLobbyBtn.classList.toggle('hidden',myIndex!==0);
-  // Show bot controls only for host and only when room isn't full
-  if (botControls) botControls.classList.toggle('hidden',myIndex!==0||players.length>=5);
+  // Use style.display directly — avoids any CSS !important conflict with .hidden class
+  if (botControls) botControls.style.display=(myIndex===0&&players.length<5)?'flex':'none';
 
   if (myIndex===0) {
     if (allReady) { startBtn.classList.remove('hidden'); hint.textContent=''; }
