@@ -227,6 +227,38 @@ h1 {
 #lobby-hint   { text-align: center; }
 .lobby-wrap .btn-primary { max-width: 280px; }
 
+/* Leave room button (non-host players) */
+.btn-leave {
+  background: rgba(255,80,80,0.12);
+  color: #ff8888;
+  border: 1px solid rgba(255,80,80,0.3);
+  border-radius: 8px;
+  padding: 10px 24px;
+  font-family: var(--font-body);
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  width: 100%;
+  max-width: 280px;
+  transition: background 0.15s;
+}
+.btn-leave:hover { background: rgba(255,80,80,0.22); }
+
+/* Remove button inside seat tiles (host only) */
+.btn-remove {
+  display: block;
+  margin: 4px auto 0;
+  background: rgba(255,60,60,0.15);
+  color: #ff7777;
+  border: 1px solid rgba(255,60,60,0.3);
+  border-radius: 5px;
+  padding: 2px 8px;
+  font-size: 11px;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+.btn-remove:hover { background: rgba(255,60,60,0.3); }
+
 /* ── Game screen layout ── */
 #game-screen {
   display: flex;

@@ -162,6 +162,17 @@ socket.on('gameover', result => {
   showScoringScreen(result);
 });
 
+// ── Kicked / removed from room ──
+socket.on('kicked', ({ reason }) => {
+  clearSession();
+  myIndex  = -1;
+  myRoomId = '';
+  myName   = '';
+  gameState = null;
+  showScreen('login-screen');
+  document.getElementById('login-error').textContent = reason || 'You were removed from the room';
+});
+
 // Show connecting status immediately on page load
 setConnectionStatus('connecting');
 
@@ -226,6 +237,21 @@ function copyRoomCode() {
 
 function startGame() { socket.emit('start'); }
 
+function leaveRoom() {
+  if (!confirm('Are you sure you want to leave the room?')) return;
+  socket.emit('leave');
+  clearSession();
+  myIndex = -1; myRoomId = ''; myName = ''; gameState = null;
+  showScreen('login-screen');
+  document.getElementById('login-error').textContent = 'You left the room.';
+}
+
+function removePlayer(targetIndex) {
+  const name = gameState?.players[targetIndex]?.name || 'this player';
+  if (!confirm(`Remove ${name} from the room?`)) return;
+  socket.emit('remove_player', { targetIndex });
+}
+
 // ══════════════════════════════════════════════════════
 //  MAIN RENDERER
 // ══════════════════════════════════════════════════════
@@ -259,19 +285,31 @@ function renderLobby(state) {
     const p    = players[i];
     const seat = document.createElement('div');
     seat.className = 'seat' + (p ? ' filled' : '') + (p?.disconnected ? ' dc' : '');
+
+    // Host sees a ✕ Remove button next to every non-host occupied seat
+    const removeBtn = (p && myIndex === 0 && i !== 0)
+      ? `<button class="btn-remove" onclick="removePlayer(${i})" title="Remove ${escHtml(p.name)}">✕</button>`
+      : '';
+
     seat.innerHTML = p
       ? `<span class="seat-icon">${p.disconnected ? '⚡' : icons[i]}</span>
          <span class="seat-name">${escHtml(p.name)}</span>
          ${i === 0       ? '<span class="seat-tag">HOST</span>'  : ''}
          ${i === myIndex ? '<span class="seat-tag">YOU</span>'   : ''}
-         ${p.disconnected ? '<span class="seat-tag" style="color:#ff9900">Away</span>' : ''}`
+         ${p.disconnected ? '<span class="seat-tag" style="color:#ff9900">Away</span>' : ''}
+         ${removeBtn}`
       : `<span class="seat-icon" style="opacity:0.3">···</span>
          <span class="seat-name" style="opacity:0.3">Empty</span>`;
     grid.appendChild(seat);
   }
 
-  const startBtn = document.getElementById('start-btn');
-  const hint     = document.getElementById('lobby-hint');
+  const startBtn  = document.getElementById('start-btn');
+  const leaveBtn  = document.getElementById('leave-btn');
+  const hint      = document.getElementById('lobby-hint');
+
+  // Leave button: visible for all non-host players
+  if (leaveBtn) leaveBtn.classList.toggle('hidden', myIndex === 0);
+
   if (myIndex === 0) {
     if (allReady) {
       startBtn.classList.remove('hidden');

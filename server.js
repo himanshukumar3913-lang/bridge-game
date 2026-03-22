@@ -146,6 +146,36 @@ class Game {
     if (p) { p.disconnected = true; p.lastSeen = Date.now(); p.socketId = null; }
   }
 
+  /**
+   * Permanently remove a player from the lobby (waiting phase only).
+   * Returns the removed player's socketId so the server can notify them,
+   * or null if removal is not allowed.
+   * All players after the removed index shift down by 1.
+   */
+  removePlayer(targetIdx) {
+    if (this.phase !== 'waiting') return null; // lobby only
+    if (targetIdx === 0)          return null; // host cannot be removed
+    if (targetIdx < 0 || targetIdx >= this.players.length) return null;
+
+    const removed = this.players[targetIdx];
+    this.players.splice(targetIdx, 1);
+
+    // Shift score/reveal maps down for players after the removed slot
+    for (let i = targetIdx; i < this.players.length; i++) {
+      this.trickPts[i]    = this.trickPts[i + 1]   || 0;
+      this.roundScores[i] = this.roundScores[i + 1] || 0;
+      this.totalScores[i] = this.totalScores[i + 1] || 0;
+      this.reveal[i]      = this.reveal[i + 1]      || 0;
+    }
+    const last = this.players.length;
+    delete this.trickPts[last];
+    delete this.roundScores[last];
+    delete this.totalScores[last];
+    delete this.reveal[last];
+
+    return removed.socketId; // caller notifies this socket
+  }
+
   startRound() {
     this.deck          = shuffle(createDeck());
     this.phase         = 'bidding';
@@ -556,10 +586,87 @@ io.on('connection', socket => {
     const game = games[socket.roomId];
     if (game && socket.playerIndex !== undefined) {
       const name = game.players[socket.playerIndex]?.name || 'A player';
-      game.markDisconnected(socket.playerIndex);
-      broadcast(socket.roomId, 'msg', { text: `⚠️ ${name} disconnected – they can rejoin with the same name` });
+      if (game.phase === 'waiting') {
+        // In the lobby, fully remove the player so the slot is freed
+        game.removePlayer(socket.playerIndex);
+        // Re-index all remaining sockets in the room
+        const sockets = io.sockets.adapter.rooms.get(socket.roomId);
+        if (sockets) {
+          for (const sid of sockets) {
+            const s = io.sockets.sockets.get(sid);
+            if (s && s.playerIndex > socket.playerIndex) s.playerIndex--;
+          }
+        }
+        broadcast(socket.roomId, 'msg', { text: `${name} left the room` });
+      } else {
+        // During game, keep slot so they can reconnect
+        game.markDisconnected(socket.playerIndex);
+        broadcast(socket.roomId, 'msg', { text: `⚠️ ${name} disconnected – they can rejoin with the same name` });
+      }
       broadcastState(socket.roomId);
     }
+  });
+
+  // ── Player voluntarily leaves the lobby ──
+  socket.on('leave', () => {
+    const game = games[socket.roomId];
+    if (!game || game.phase !== 'waiting') return;
+    if (socket.playerIndex === 0) return; // host cannot leave, must close the room
+
+    const name    = game.players[socket.playerIndex]?.name || 'A player';
+    const removed = game.removePlayer(socket.playerIndex);
+
+    // Re-index all remaining sockets in the room
+    const sockets = io.sockets.adapter.rooms.get(socket.roomId);
+    if (sockets) {
+      for (const sid of sockets) {
+        const s = io.sockets.sockets.get(sid);
+        if (s && s.playerIndex > socket.playerIndex) s.playerIndex--;
+      }
+    }
+
+    socket.leave(socket.roomId);
+    socket.roomId      = undefined;
+    socket.playerIndex = undefined;
+    socket.emit('kicked', { reason: 'You left the room' });
+
+    broadcast(game.roomId, 'msg', { text: `${name} left the room` });
+    broadcastState(game.roomId);
+  });
+
+  // ── Host removes a player from the lobby ──
+  socket.on('remove_player', ({ targetIndex }) => {
+    const game = games[socket.roomId];
+    if (!game)                       return;
+    if (game.phase !== 'waiting')    { socket.emit('err', 'Can only remove players in the lobby'); return; }
+    if (socket.playerIndex !== 0)    { socket.emit('err', 'Only the host can remove players'); return; }
+    if (targetIndex === 0)           { socket.emit('err', 'Host cannot remove themselves'); return; }
+
+    const targetName      = game.players[targetIndex]?.name || 'Player';
+    const targetSocketId  = game.removePlayer(targetIndex);
+
+    // Re-index all remaining sockets
+    const sockets = io.sockets.adapter.rooms.get(socket.roomId);
+    if (sockets) {
+      for (const sid of sockets) {
+        const s = io.sockets.sockets.get(sid);
+        if (s && s.playerIndex > targetIndex) s.playerIndex--;
+      }
+    }
+
+    // Notify the removed player's socket if they are still connected
+    if (targetSocketId) {
+      const targetSocket = io.sockets.sockets.get(targetSocketId);
+      if (targetSocket) {
+        targetSocket.leave(socket.roomId);
+        targetSocket.roomId      = undefined;
+        targetSocket.playerIndex = undefined;
+        targetSocket.emit('kicked', { reason: 'You were removed from the room by the host' });
+      }
+    }
+
+    broadcast(socket.roomId, 'msg', { text: `${targetName} was removed by the host` });
+    broadcastState(socket.roomId);
   });
 });
 
