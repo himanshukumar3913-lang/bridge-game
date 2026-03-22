@@ -1,12 +1,10 @@
 /**
- * Bridge Card Game – Client (Fixed)
- *
- * Fixes applied:
- *  1. BLOCKER FIX: Force WebSocket transport – no more polling blocked by Render proxy
- *  2. Session saved to localStorage – refreshing the page reconnects you automatically
- *  3. New players appear instantly in lobby for all connected players
- *  4. Disconnected players shown with ⚡ badge in lobby and game
- *  5. Scoring screen restored on reconnect
+ * Bridge Card Game – Client
+ * Key fixes:
+ *  - Starts with polling, upgrades to WebSocket automatically (works on all networks)
+ *  - Shows visible connection status so you always know if it's connecting/connected/failed
+ *  - Buttons disabled until connected – no more silent "nothing happens" on click
+ *  - Session saved to localStorage for page-refresh recovery
  */
 
 'use strict';
@@ -27,27 +25,60 @@ function fullDeck50() {
 }
 
 // ══════════════════════════════════════════════════════
-//  ★ FIX 1 – BLOCKER: Force WebSocket transport
-//  Without this, Socket.IO uses HTTP long-polling first,
-//  which Render's proxy blocks → real-time stops working.
+//  SOCKET CONNECTION
+//  Start with polling (always works), upgrade to WebSocket
+//  automatically once the connection is established.
+//  This is the most reliable approach for Render.com.
 // ══════════════════════════════════════════════════════
 const socket = io({
-  transports: ['websocket'],   // skip polling entirely
+  transports: ['polling', 'websocket'],  // polling first, upgrade to WS
+  upgrade: true,
   reconnection: true,
   reconnectionAttempts: Infinity,
-  reconnectionDelay: 1000,
-  reconnectionDelayMax: 5000,
+  reconnectionDelay: 1500,
+  reconnectionDelayMax: 8000,
+  timeout: 20000,
 });
 
-let myIndex   = -1;
-let myRoomId  = '';
-let myName    = '';
-let gameState = null;
+let myIndex     = -1;
+let myRoomId    = '';
+let myName      = '';
+let gameState   = null;
 let askSelected = [];
+let isConnected = false;
 
 // ══════════════════════════════════════════════════════
-//  ★ FIX 2 – SESSION PERSISTENCE
-//  On page load, check if we were in a game and auto-rejoin.
+//  CONNECTION STATUS INDICATOR
+//  Shows clearly in the UI whether the server is reachable
+// ══════════════════════════════════════════════════════
+
+function setConnectionStatus(status) {
+  // status: 'connecting' | 'connected' | 'disconnected'
+  const bar = document.getElementById('conn-status');
+  if (!bar) return;
+  const configs = {
+    connecting:   { text: '⏳ Connecting to server…', color: '#cc8800', show: true  },
+    connected:    { text: '🟢 Connected',              color: '#44bb66', show: false }, // hide after short delay
+    disconnected: { text: '🔴 Connection lost – retrying…', color: '#cc3333', show: true  },
+  };
+  const cfg = configs[status] || configs.connecting;
+  bar.textContent   = cfg.text;
+  bar.style.color   = cfg.color;
+  bar.style.display = 'block';
+
+  if (status === 'connected') {
+    setTimeout(() => { bar.style.display = 'none'; }, 2000);
+  }
+
+  // Disable action buttons when not connected
+  isConnected = (status === 'connected');
+  document.querySelectorAll('.btn-primary, .btn-secondary').forEach(btn => {
+    btn.disabled = !isConnected;
+  });
+}
+
+// ══════════════════════════════════════════════════════
+//  SESSION PERSISTENCE (page refresh recovery)
 // ══════════════════════════════════════════════════════
 
 function saveSession() {
@@ -64,25 +95,47 @@ function loadSession() {
   catch { return null; }
 }
 
-// On page load: try to reconnect automatically
-window.addEventListener('load', () => {
+// ══════════════════════════════════════════════════════
+//  SOCKET EVENTS
+// ══════════════════════════════════════════════════════
+
+socket.on('connect', () => {
+  setConnectionStatus('connected');
+  document.getElementById('login-error').textContent = '';
+
+  // Auto-reconnect if we have a saved session
   const session = loadSession();
   if (session?.roomId && session?.name && session?.playerIndex !== undefined) {
-    // Show a brief "Reconnecting…" message on the login screen
     document.getElementById('login-error').textContent = `Reconnecting as "${session.name}"…`;
     socket.emit('reconnect_player', session);
   }
 });
 
-// ══════════════════════════════════════════════════════
-//  SOCKET EVENTS
-// ══════════════════════════════════════════════════════
+socket.on('connect_error', (err) => {
+  setConnectionStatus('disconnected');
+  console.error('Connection error:', err.message);
+});
+
+socket.on('disconnect', (reason) => {
+  setConnectionStatus('disconnected');
+  console.log('Disconnected:', reason);
+});
+
+socket.on('reconnect_attempt', () => {
+  setConnectionStatus('connecting');
+});
+
+socket.on('reconnect', () => {
+  setConnectionStatus('connected');
+  const session = loadSession();
+  if (session) socket.emit('reconnect_player', session);
+});
 
 socket.on('joined', ({ roomId, playerIndex, name }) => {
   myIndex  = playerIndex;
   myRoomId = roomId;
-  myName   = name || document.getElementById('name-input').value.trim() || loadSession()?.name || '';
-  saveSession();  // ★ FIX 2: persist session
+  myName   = name || myName;
+  saveSession();
   document.getElementById('room-code-text').textContent = roomId;
   document.getElementById('login-error').textContent = '';
   showScreen('lobby-screen');
@@ -91,7 +144,6 @@ socket.on('joined', ({ roomId, playerIndex, name }) => {
 socket.on('err', msg => {
   setMsgBar(msg);
   document.getElementById('login-error').textContent = msg;
-  // If reconnect failed, clear the stale session
   if (msg.includes('Session expired') || msg.includes('Could not restore')) clearSession();
 });
 
@@ -110,11 +162,8 @@ socket.on('gameover', result => {
   showScoringScreen(result);
 });
 
-// Show reconnecting indicator on socket reconnect
-socket.on('reconnect', () => {
-  const session = loadSession();
-  if (session) socket.emit('reconnect_player', session);
-});
+// Show connecting status immediately on page load
+setConnectionStatus('connecting');
 
 // ══════════════════════════════════════════════════════
 //  SCREEN MANAGEMENT
@@ -143,6 +192,7 @@ function switchTab(tab) {
 }
 
 function createRoom() {
+  if (!isConnected) { document.getElementById('login-error').textContent = 'Still connecting – please wait a moment…'; return; }
   const name = document.getElementById('name-input').value.trim();
   if (!name) { document.getElementById('login-error').textContent = 'Please enter your name.'; return; }
   myName = name;
@@ -150,9 +200,10 @@ function createRoom() {
 }
 
 function joinRoom() {
+  if (!isConnected) { document.getElementById('login-error').textContent = 'Still connecting – please wait a moment…'; return; }
   const name = document.getElementById('name-input').value.trim();
   const code = (document.getElementById('room-input').value || '').trim().toUpperCase();
-  if (!name)        { document.getElementById('login-error').textContent = 'Please enter your name.'; return; }
+  if (!name)           { document.getElementById('login-error').textContent = 'Please enter your name.'; return; }
   if (code.length < 6) { document.getElementById('login-error').textContent = 'Enter the 6-letter room code.'; return; }
   myName = name;
   socket.emit('join', { roomId: code, name });
@@ -182,7 +233,6 @@ function startGame() { socket.emit('start'); }
 function renderState(state) {
   if (state.phase === 'waiting') { renderLobby(state); return; }
   if (state.phase === 'scoring') {
-    // If scoring screen is already visible, just update player ring (totals may change next round)
     if (!document.getElementById('scoring-screen').classList.contains('hidden')) return;
   }
   showScreen('game-screen');
@@ -193,17 +243,14 @@ function renderState(state) {
   renderMyHand(state);
 }
 
-// ── Lobby ──
-
 function renderLobby(state) {
   showScreen('lobby-screen');
   const { players } = state;
 
-  // ★ FIX 3: Lobby auto-updates because server calls broadcastState on every join
   document.getElementById('player-count').textContent = players.length;
-  const allConnected = players.length === 5 && players.every(p => !p.disconnected);
+  const allReady = players.length === 5 && players.every(p => !p.disconnected);
   document.getElementById('lobby-status').textContent =
-    allConnected ? 'All 5 players ready!' : `Players connected: ${players.length}/5`;
+    allReady ? 'All 5 players ready!' : `Players connected: ${players.length}/5`;
 
   const icons = ['🎩','🎭','🃏','🌟','🎲'];
   const grid  = document.getElementById('seat-grid');
@@ -226,7 +273,7 @@ function renderLobby(state) {
   const startBtn = document.getElementById('start-btn');
   const hint     = document.getElementById('lobby-hint');
   if (myIndex === 0) {
-    if (allConnected) {
+    if (allReady) {
       startBtn.classList.remove('hidden');
       hint.textContent = '';
     } else {
@@ -235,11 +282,9 @@ function renderLobby(state) {
     }
   } else {
     startBtn.classList.add('hidden');
-    hint.textContent = allConnected ? 'Waiting for the host to start…' : `Waiting for ${5 - players.length} more player(s)…`;
+    hint.textContent = allReady ? 'Waiting for host to start…' : `Waiting for ${5 - players.length} more player(s)…`;
   }
 }
-
-// ── Players ring (top bar during game) ──
 
 function renderPlayersRing(state) {
   const ring = document.getElementById('players-ring');
@@ -247,15 +292,15 @@ function renderPlayersRing(state) {
 
   state.players.forEach((p, i) => {
     let cls = 'player-chip';
-    if (i === myIndex)                                              cls += ' me';
-    if (p.isDealer)                                                 cls += ' is-dealer';
-    if (i === state.currentBidder && state.phase === 'bidding')     cls += ' active-turn';
-    if (i === state.turnPlayer    && state.phase === 'playing')     cls += ' active-turn';
-    if (i === state.highestBidder && state.phase !== 'waiting')     cls += ' highest-bidder';
-    if (p.reveal === 1)                                             cls += ' teammate-1';
-    if (p.reveal === 2)                                             cls += ' teammate-2';
-    if (state.passed?.includes(i))                                  cls += ' passed';
-    if (p.disconnected)                                             cls += ' disconnected';
+    if (i === myIndex)                                          cls += ' me';
+    if (p.isDealer)                                             cls += ' is-dealer';
+    if (i === state.currentBidder && state.phase === 'bidding') cls += ' active-turn';
+    if (i === state.turnPlayer    && state.phase === 'playing') cls += ' active-turn';
+    if (i === state.highestBidder && state.phase !== 'waiting') cls += ' highest-bidder';
+    if (p.reveal === 1)                                         cls += ' teammate-1';
+    if (p.reveal === 2)                                         cls += ' teammate-2';
+    if (state.passed?.includes(i))                              cls += ' passed';
+    if (p.disconnected)                                         cls += ' disconnected';
 
     const tags = [];
     if (p.isDealer)                tags.push('🃏');
@@ -276,8 +321,6 @@ function renderPlayersRing(state) {
     ring.appendChild(chip);
   });
 }
-
-// ── Info strip ──
 
 function renderInfoStrip(state) {
   const PHASE_LABELS = {
@@ -304,8 +347,6 @@ function renderInfoStrip(state) {
   }
 }
 
-// ── Trick zone ──
-
 function renderTrickZone(state) {
   const row = document.getElementById('trick-cards-row');
   if (!state.trick || state.trick.length === 0) {
@@ -320,8 +361,6 @@ function renderTrickZone(state) {
     </div>`;
   }).join('');
 }
-
-// ── Action panel ──
 
 function renderActionPanel(state) {
   const panel = document.getElementById('action-panel');
@@ -381,7 +420,7 @@ function renderTrump(panel, state) {
     panel.innerHTML = `
       <div style="text-align:center;margin-bottom:10px;font-size:13px;color:var(--text-dim)">
         You won with bid <strong style="color:var(--gold-light)">${state.highestBid}</strong>.<br>
-        Choose trump – Deal 2 (4 more cards each) happens automatically.
+        Choose trump – Deal 2 happens automatically after this.
       </div>
       <div class="suit-grid">
         <div class="suit-opt"     onclick="doTrump('spades')"  ><span class="suit-sym">♠</span>Spades</div>
@@ -402,9 +441,7 @@ function renderAsk(panel, state) {
         <p style="font-size:14px;margin-bottom:8px">
           Trump: <strong style="color:var(--gold-light)">${SUIT_SYM[state.trump]} ${SUIT_NAME[state.trump]}</strong>
           &nbsp;|&nbsp; You now have <strong>10 cards</strong>.<br>
-          <span style="color:var(--text-dim);font-size:12px">
-            Ask for 2 cards not in your hand. Their holders are your secret teammates.
-          </span>
+          <span style="color:var(--text-dim);font-size:12px">Ask for 2 cards not in your hand.</span>
         </p>
         <button class="btn-primary" style="max-width:280px" onclick="openAskModal()">
           🃏 Select 2 Cards to Ask For
@@ -427,11 +464,9 @@ function renderPlaying(panel, state) {
   } else {
     const whose = state.players[state.turnPlayer]?.name || '?';
     const dc    = state.players[state.turnPlayer]?.disconnected;
-    panel.innerHTML = `<p class="wait-msg">Waiting for <strong>${escHtml(whose)}</strong>${dc ? ' ⚡ (disconnected)' : ''} to play…</p>`;
+    panel.innerHTML = `<p class="wait-msg">Waiting for <strong>${escHtml(whose)}</strong>${dc ? ' ⚡(away)' : ''} to play…</p>`;
   }
 }
-
-// ── My hand ──
 
 function renderMyHand(state) {
   const myCards = state.myCards || [];

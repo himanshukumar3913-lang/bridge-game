@@ -1,14 +1,6 @@
 /**
- * Bridge Card Game – Server (Fixed)
- *
- * Fixes applied:
- *  1. Player reconnection – refreshing the page restores your session
- *  2. Disconnected players keep their slot for 10 minutes (can rejoin by name)
- *  3. Lobby auto-updates for all connected players when someone joins
- *  4. lastGameover stored so reconnecting players see the scoring screen
- *
- * RULE ORDER:
- *   Deal 1 (6 cards) → Bidding → Trump → Deal 2 (4 cards) → Ask → Play
+ * Bridge Card Game – Server
+ * RULE ORDER: Deal 1 (6 cards) → Bidding → Trump → Deal 2 (4 cards) → Ask → Play
  */
 
 const express = require('express');
@@ -19,15 +11,22 @@ const path    = require('path');
 const app    = express();
 const server = http.createServer(app);
 
-// Allow both websocket and polling – client will force websocket,
-// but keep polling as fallback for edge cases
 const io = new Server(server, {
-  cors: { origin: '*' },
+  cors: { origin: '*', methods: ['GET', 'POST'] },
+  // Allow both polling AND websocket – client upgrades to websocket automatically.
+  // This is the most compatible setup for Render.com.
+  transports: ['polling', 'websocket'],
+  allowUpgrades: true,
   pingTimeout: 60000,
   pingInterval: 25000,
+  // Render sometimes needs a longer connect timeout
+  connectTimeout: 45000,
 });
 
 app.use(express.static(path.join(__dirname, 'public')));
+
+// Health-check endpoint so Render knows the server is alive
+app.get('/health', (req, res) => res.send('OK'));
 
 // ══════════════════════════════════════════════════════
 //  CARD SYSTEM
@@ -94,7 +93,7 @@ function sortCards(cards) {
 class Game {
   constructor(roomId) {
     this.roomId  = roomId;
-    this.players = [];   // { socketId, name, cards, disconnected, lastSeen }
+    this.players = [];
     this.phase   = 'waiting';
     this.dealer  = 0;
     this.deck    = [];
@@ -119,21 +118,13 @@ class Game {
 
     this.roundScores  = {};
     this.totalScores  = {};
-    this.lastGameover = null; // stored so reconnecting players get the scoring screen
+    this.lastGameover = null;
   }
-
-  // ── Player management ──
 
   addPlayer(socketId, name) {
     if (this.players.length >= 5) return -1;
     const idx = this.players.length;
-    this.players.push({
-      socketId,
-      name,
-      cards: [],
-      disconnected: false,
-      lastSeen: Date.now(),
-    });
+    this.players.push({ socketId, name, cards: [], disconnected: false, lastSeen: Date.now() });
     this.trickPts[idx]    = 0;
     this.roundScores[idx] = 0;
     this.totalScores[idx] = this.totalScores[idx] || 0;
@@ -141,30 +132,19 @@ class Game {
     return idx;
   }
 
-  /**
-   * Reconnect an existing player by matching their name and index.
-   * Returns the player index on success, or -1 on failure.
-   */
   reconnectPlayer(socketId, name, playerIndex) {
     const p = this.players[playerIndex];
-    if (!p) return -1;
-    if (p.name !== name) return -1;  // name must match exactly
-    p.socketId    = socketId;
+    if (!p || p.name !== name) return -1;
+    p.socketId     = socketId;
     p.disconnected = false;
-    p.lastSeen    = Date.now();
+    p.lastSeen     = Date.now();
     return playerIndex;
   }
 
   markDisconnected(playerIndex) {
     const p = this.players[playerIndex];
-    if (p) {
-      p.disconnected = true;
-      p.lastSeen    = Date.now();
-      p.socketId    = null;
-    }
+    if (p) { p.disconnected = true; p.lastSeen = Date.now(); p.socketId = null; }
   }
-
-  // ── Round start ──
 
   startRound() {
     this.deck          = shuffle(createDeck());
@@ -189,7 +169,6 @@ class Game {
       this.reveal[i]        = 0;
     }
 
-    // Deal 1: 6 cards each, clockwise from left of dealer
     for (let c = 0; c < 6; c++)
       for (let p = 0; p < 5; p++)
         this.players[(this.dealer + 1 + p) % 5].cards.push(this.deck.pop());
@@ -197,11 +176,8 @@ class Game {
     for (let i = 0; i < 5; i++)
       this.players[i].cards = sortCards(this.players[i].cards);
 
-    // Bidding starts anti-clockwise: right of dealer
     this.currentBidder = (this.dealer + 4) % 5;
   }
-
-  // ── Bidding ──
 
   placeBid(playerIdx, amount) {
     if (this.phase !== 'bidding')         return 'Not the bidding phase';
@@ -225,11 +201,7 @@ class Game {
     if (this.passed.size === 4) {
       if (this.highestBidder === -1) {
         for (let i = 0; i < 5; i++) {
-          if (!this.passed.has(i)) {
-            this.highestBidder = i;
-            this.highestBid    = 160;
-            break;
-          }
+          if (!this.passed.has(i)) { this.highestBidder = i; this.highestBid = 160; break; }
         }
       }
       this.phase = 'trump';
@@ -243,8 +215,6 @@ class Game {
     return null;
   }
 
-  // ── Trump → triggers Deal 2 ──
-
   setTrump(playerIdx, suit) {
     if (this.phase !== 'trump')           return 'Not the trump selection phase';
     if (playerIdx !== this.highestBidder) return 'Only the highest bidder chooses trump';
@@ -252,7 +222,6 @@ class Game {
 
     this.trump = suit;
 
-    // Deal 2: 4 more cards each, clockwise from left of dealer
     for (let c = 0; c < 4; c++)
       for (let p = 0; p < 5; p++)
         this.players[(this.dealer + 1 + p) % 5].cards.push(this.deck.pop());
@@ -263,8 +232,6 @@ class Game {
     this.phase = 'ask';
     return null;
   }
-
-  // ── Ask ──
 
   askForCards(playerIdx, cardIds) {
     if (this.phase !== 'ask')                            return 'Not the ask phase';
@@ -283,8 +250,7 @@ class Game {
     if (resolved.length !== 2) return 'One or more card IDs are invalid';
 
     this.askedCards = resolved;
-
-    this.teammates = [];
+    this.teammates  = [];
     for (let i = 0; i < 5; i++) {
       if (i === playerIdx) continue;
       if (this.players[i].cards.some(c => cardIds.includes(c.id)) && !this.teammates.includes(i))
@@ -295,8 +261,6 @@ class Game {
     this.turnPlayer = (this.dealer + 4) % 5;
     return null;
   }
-
-  // ── Play ──
 
   playCard(playerIdx, cardId) {
     if (this.phase !== 'playing')      return 'Game is not in the playing phase';
@@ -391,29 +355,24 @@ class Game {
 
     const gameoverData = {
       gameOver:    true,
-      bid,
-      bidder,
+      bid, bidder,
       bidderName:  this.players[bidder].name,
-      teamPts,
-      won,
+      teamPts, won,
       teammates:   this.teammates,
       roundScores: { ...this.roundScores },
       totalScores: { ...this.totalScores },
       trickPts:    { ...this.trickPts },
     };
 
-    // Store so reconnecting players can receive it
     this.lastGameover = gameoverData;
     return gameoverData;
   }
 
-  // ── State snapshot for one player ──
-
   stateFor(playerIdx) {
     return {
-      phase:       this.phase,
-      myIndex:     playerIdx,
-      myCards:     this.players[playerIdx]?.cards || [],
+      phase:    this.phase,
+      myIndex:  playerIdx,
+      myCards:  this.players[playerIdx]?.cards || [],
 
       players: this.players.map((p, i) => ({
         name:         p.name,
@@ -432,10 +391,8 @@ class Game {
       highestBidder:   this.highestBidder,
       passed:          [...this.passed],
       bidLog:          this.bidLog,
-
-      trump:        this.trump,
-      askedCardIds: this.askedCards.map(c => c.id),
-
+      trump:           this.trump,
+      askedCardIds:    this.askedCards.map(c => c.id),
       turnPlayer:      this.turnPlayer,
       trick:           this.trick,
       round:           this.round,
@@ -468,9 +425,13 @@ function broadcast(roomId, event, data) {
 }
 
 io.on('connection', socket => {
-  console.log('Client connected:', socket.id);
+  console.log('Connected:', socket.id, '| transport:', socket.conn.transport.name);
 
-  // ── Create room ──
+  // Log when transport upgrades from polling → websocket
+  socket.conn.on('upgrade', transport => {
+    console.log('Upgraded to:', transport.name, '| socket:', socket.id);
+  });
+
   socket.on('create', ({ name }) => {
     let roomId;
     do { roomId = Math.random().toString(36).slice(2, 8).toUpperCase(); }
@@ -486,30 +447,27 @@ io.on('connection', socket => {
     broadcastState(roomId);
   });
 
-  // ── Join room ──
   socket.on('join', ({ roomId, name }) => {
     const game = games[roomId];
     if (!game) { socket.emit('err', 'Room not found – check the code and try again'); return; }
 
-    // Check if this is a known player reconnecting by name
+    // Reconnect by name
     const existingIdx = game.players.findIndex(p => p.name === name);
     if (existingIdx !== -1) {
-      // Allow reconnect even if game has started
-      const reconnected = game.reconnectPlayer(socket.id, name, existingIdx);
-      if (reconnected !== -1) {
+      const idx = game.reconnectPlayer(socket.id, name, existingIdx);
+      if (idx !== -1) {
         socket.join(roomId);
         socket.roomId      = roomId;
-        socket.playerIndex = existingIdx;
-        socket.emit('joined', { roomId, playerIndex: existingIdx, name });
+        socket.playerIndex = idx;
+        socket.emit('joined', { roomId, playerIndex: idx, name });
         broadcastState(roomId);
-        // If game is over, send the gameover event again
         if (game.lastGameover) socket.emit('gameover', game.lastGameover);
         broadcast(roomId, 'msg', { text: `${name} reconnected` });
         return;
       }
     }
 
-    if (game.phase !== 'waiting') { socket.emit('err', 'Game already started – if you were in this game, use the same name to rejoin'); return; }
+    if (game.phase !== 'waiting') { socket.emit('err', 'Game already started – use your original name to rejoin'); return; }
     if (game.players.length >= 5) { socket.emit('err', 'Room is full (5/5)'); return; }
 
     const idx = game.addPlayer(socket.id, name);
@@ -521,7 +479,6 @@ io.on('connection', socket => {
     broadcast(roomId, 'msg', { text: `${name} joined!` });
   });
 
-  // ── Reconnect (called automatically from client on page refresh) ──
   socket.on('reconnect_player', ({ roomId, name, playerIndex }) => {
     const game = games[roomId];
     if (!game) { socket.emit('err', 'Session expired – please join again'); return; }
@@ -534,27 +491,19 @@ io.on('connection', socket => {
     socket.playerIndex = idx;
     socket.emit('joined', { roomId, playerIndex: idx, name });
     broadcastState(roomId);
-    // Restore scoring screen if game just ended
     if (game.lastGameover) socket.emit('gameover', game.lastGameover);
     broadcast(roomId, 'msg', { text: `${name} reconnected` });
   });
 
-  // ── Start game ──
   socket.on('start', () => {
     const game = games[socket.roomId];
     if (!game || socket.playerIndex !== 0) return;
-    // Count only non-disconnected players
-    const activePlayers = game.players.filter(p => !p.disconnected).length;
-    if (game.players.length !== 5 || activePlayers < 5) {
-      socket.emit('err', 'All 5 players must be connected to start');
-      return;
-    }
+    if (game.players.length !== 5) { socket.emit('err', 'All 5 players must be connected to start'); return; }
     game.startRound();
     broadcastState(socket.roomId);
     broadcast(socket.roomId, 'msg', { text: 'Game started! Deal 1 done (6 cards each) – bidding begins.' });
   });
 
-  // ── Bid ──
   socket.on('bid', ({ amount }) => {
     const game = games[socket.roomId];
     if (!game) return;
@@ -565,32 +514,25 @@ io.on('connection', socket => {
     broadcastState(socket.roomId);
   });
 
-  // ── Trump ──
   socket.on('trump', ({ suit }) => {
     const game = games[socket.roomId];
     if (!game) return;
     const err = game.setTrump(socket.playerIndex, suit);
     if (err) { socket.emit('err', err); return; }
-    broadcast(socket.roomId, 'msg', {
-      text: `Trump: ${SUIT_SYMS[suit]} ${suit} – Deal 2 done (4 more cards each). Ask phase!`
-    });
+    broadcast(socket.roomId, 'msg', { text: `Trump: ${SUIT_SYMS[suit]} ${suit} – Deal 2 done! Ask phase.` });
     broadcastState(socket.roomId);
   });
 
-  // ── Ask ──
   socket.on('ask', ({ cardIds }) => {
     const game = games[socket.roomId];
     if (!game) return;
     const err = game.askForCards(socket.playerIndex, cardIds);
     if (err) { socket.emit('err', err); return; }
     const asked = game.askedCards.map(c => c.rank + SUIT_SYMS[c.suit]).join(' & ');
-    broadcast(socket.roomId, 'msg', {
-      text: `${game.players[socket.playerIndex].name} asked for: ${asked} – game begins!`
-    });
+    broadcast(socket.roomId, 'msg', { text: `${game.players[socket.playerIndex].name} asked for: ${asked} – game begins!` });
     broadcastState(socket.roomId);
   });
 
-  // ── Play ──
   socket.on('play', ({ cardId }) => {
     const game = games[socket.roomId];
     if (!game) return;
@@ -601,41 +543,34 @@ io.on('connection', socket => {
     if (result?.gameOver)  broadcast(socket.roomId, 'gameover', result);
   });
 
-  // ── Next round ──
   socket.on('next', () => {
     const game = games[socket.roomId];
     if (!game || socket.playerIndex !== 0) return;
     game.dealer = (game.dealer + 1) % 5;
     game.startRound();
     broadcastState(socket.roomId);
-    broadcast(socket.roomId, 'msg', { text: 'New round! Dealer rotated. Deal 1 done – bidding begins.' });
+    broadcast(socket.roomId, 'msg', { text: 'New round! Dealer rotated. Bidding begins.' });
   });
 
-  // ── Disconnect ──
   socket.on('disconnect', () => {
     const game = games[socket.roomId];
     if (game && socket.playerIndex !== undefined) {
       const name = game.players[socket.playerIndex]?.name || 'A player';
       game.markDisconnected(socket.playerIndex);
       broadcast(socket.roomId, 'msg', { text: `⚠️ ${name} disconnected – they can rejoin with the same name` });
-      broadcastState(socket.roomId); // updates player chip to show disconnected state
+      broadcastState(socket.roomId);
     }
   });
 });
 
-// Clean up completely dead rooms every 30 minutes
+// Clean up dead rooms every 30 minutes
 setInterval(() => {
   const now = Date.now();
   for (const [roomId, game] of Object.entries(games)) {
     const allGone = game.players.every(p => p.disconnected && (now - p.lastSeen) > 30 * 60 * 1000);
-    if (allGone) {
-      delete games[roomId];
-      console.log(`Cleaned up empty room ${roomId}`);
-    }
+    if (allGone) { delete games[roomId]; console.log(`Cleaned room ${roomId}`); }
   }
 }, 10 * 60 * 1000);
 
 const PORT = process.env.PORT || 3000;
-server.listen(PORT, () => {
-  console.log(`\n🃏 Bridge Game Server running at http://localhost:${PORT}\n`);
-});
+server.listen(PORT, () => console.log(`\n🃏 Bridge running at http://localhost:${PORT}\n`));
