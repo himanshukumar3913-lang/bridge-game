@@ -174,7 +174,11 @@ socket.on('state',state=>{
 
 socket.on('msg',({text})=>setMsgBar(text));
 socket.on('trick',result=>{ setMsgBar(`🏆 ${result.winnerName} won the trick (+${result.ptsWon} pts)`); playSound('win'); });
-socket.on('gameover',result=>showScoringScreen(result));
+// Fix 4: gameover from auto-last-trick already waited 5s on table; client waits 7s more on sidebar
+socket.on('gameover',result=>{
+  const delay = gameState?.autoLastTrickInProgress ? 7000 : 0;
+  setTimeout(()=>showScoringScreen(result), delay);
+});
 socket.on('trump_event',data=>showTrumpToast(data));
 socket.on('early_loss',data=>showEarlyLossModal(data));
 socket.on('podium',data=>showPodium(data));
@@ -222,9 +226,10 @@ function createRoom() {
 function joinRoom() {
   if (!isConnected){document.getElementById('login-error').textContent='Still connecting…';return;}
   const name=document.getElementById('name-input').value.trim();
-  const code=(document.getElementById('room-input').value||'').trim().toUpperCase();
+  const codeRaw=(document.getElementById('room-input').value||'').trim();
+  const code=codeRaw.padStart ? codeRaw : String(codeRaw);
   if (!name){document.getElementById('login-error').textContent='Please enter your name.';return;}
-  if (code.length<6){document.getElementById('login-error').textContent='Enter the 6-letter room code.';return;}
+  if (!/^\d{4}$/.test(code)){document.getElementById('login-error').textContent='Enter the 4-digit room code.';return;}
   myName=name; socket.emit('join',{roomId:code,name});
 }
 document.getElementById('name-input').addEventListener('keydown',e=>{
@@ -355,6 +360,7 @@ function renderPlayersRing(state) {
     if (state.passed?.includes(i)) cls+=' passed';
     if (p.disconnected) cls+=' disconnected';
     if (p.isBot) cls+=' bot-chip';
+    if (p.vacated) cls+=' vacated';
     const tags=[];
     if (p.isDealer) tags.push('🃏');
     if (p.isBot) tags.push('🤖');
@@ -362,6 +368,7 @@ function renderPlayersRing(state) {
     if (p.reveal===2) tags.push('🤝🤝');
     if (state.passed?.includes(i)) tags.push('pass');
     if (p.disconnected) tags.push('⚡away');
+    if (p.vacated) tags.push('🚪open');
     if (i===myIndex) tags.push('you');
     const chip=document.createElement('div'); chip.className=cls;
     chip.innerHTML=`<div class="pchip-name">${escHtml(p.name)}</div><div class="pchip-sub">${p.cardCount} cards</div>${(state.phase==='playing'||state.phase==='scoring')?`<div class="pchip-pts">⭐${p.trickPts}</div>`:''}${tags.length?`<div class="pchip-sub">${tags.join('·')}</div>`:''}`;
@@ -398,7 +405,8 @@ function renderInfoStrip(state) {
   const cancelBtn=document.getElementById('cancel-game-btn');
   const skipBtn=document.getElementById('skip-score-btn');
   if (cancelBtn) cancelBtn.classList.toggle('hidden',myIndex!==0||isViewer);
-  if (skipBtn)   skipBtn.classList.toggle('hidden',myIndex!==0||state.phase!=='playing'||isViewer);
+  // Fix 3: skip only shown after early loss (earlyLossActive flag), not as a general button
+  if (skipBtn) skipBtn.classList.add('hidden');
 }
 
 function renderTrickZone(state) {
@@ -497,8 +505,9 @@ function renderBidding(panel,state) {
 
 function renderTrump(panel,state) {
   if (state.highestBidder===myIndex) {
-    panel.innerHTML=`<div style="text-align:center;margin-bottom:8px;font-size:13px;color:var(--text-dim)">You won bid <strong style="color:var(--gold-light)">${state.highestBid}</strong>. Choose trump or No Trump:</div>
-    <div class="suit-grid">
+    // Fix 1: use flex-wrap row so all 5 options always fit without overflow
+    panel.innerHTML=`<div style="text-align:center;margin-bottom:8px;font-size:13px;color:var(--text-dim)">You won bid <strong style="color:var(--gold-light)">${state.highestBid}</strong>. Choose trump:</div>
+    <div class="trump-options-row">
       <div class="suit-opt"     onclick="doTrump('spades')"  ><span class="suit-sym">♠</span>Spades</div>
       <div class="suit-opt red" onclick="doTrump('hearts')"  ><span class="suit-sym">♥</span>Hearts</div>
       <div class="suit-opt red" onclick="doTrump('diamonds')"><span class="suit-sym">♦</span>Diamonds</div>
@@ -547,7 +556,7 @@ function renderMyHand(state) {
 }
 
 /* ══════════════════════════════════════════════
-   CARD HTML  – Real card design (Feature 8)
+   CARD HTML – Single central suit (Fix 5)
    ══════════════════════════════════════════════ */
 function cardHTML(card, disabled=false, isTrick=false, extra='') {
   const isRed=(card.suit==='hearts'||card.suit==='diamonds');
@@ -558,17 +567,14 @@ function cardHTML(card, disabled=false, isTrick=false, extra='') {
   if (isTrick)  cls+=' trick';
   if (extra)    cls+=` ${extra}`;
   const sym=SUIT_SYM[card.suit];
+  // Corner index (top-left only, mirrored by CSS rotate on bottom-right)
   return `<div class="${cls}">
     ${isSpecial?'<span class="c-special">★30</span>':''}
     <div class="c-tl">
       <div class="c-rank">${card.rank}</div>
       <div class="c-suit">${sym}</div>
     </div>
-    <div class="c-center">${sym}</div>
-    <div class="c-br">
-      <div class="c-rank">${card.rank}</div>
-      <div class="c-suit">${sym}</div>
-    </div>
+    <div class="c-center-big">${sym}</div>
   </div>`;
 }
 
@@ -579,7 +585,19 @@ function doBid() { const s=document.getElementById('bid-slider'); if(!s)return; 
 function doPass()       { socket.emit('bid',{amount:'pass'}); }
 function doTrump(suit)  { socket.emit('trump',{suit}); }
 function doPlay(cardId) { socket.emit('play',{cardId}); }
-function skipToScore()  { if(!confirm('Skip remaining tricks and go to scorecard?'))return; socket.emit('skip_to_score'); }
+function skipToScore()  { socket.emit('skip_to_score'); closeEarlyLoss(); }
+
+// Fix 8: exit game during play
+function exitGame() {
+  const msg = gameState?.phase==='waiting'
+    ? 'Leave the room?'
+    : 'Exit the game? Your slot will be open for someone else to join.';
+  if (!confirm(msg)) return;
+  socket.emit('exit_game');
+  clearSession(); myIndex=-1; myRoomId=''; myName=''; gameState=null;
+  showScreen('login-screen');
+  document.getElementById('login-error').textContent='You exited the game.';
+}
 
 /* ══════════════════════════════════════════════
    ASK MODAL
@@ -636,21 +654,25 @@ function showTrumpToast(data) {
 /* ══════════════════════════════════════════════
    EARLY LOSS MODAL (Feature 3: skip button)
    ══════════════════════════════════════════════ */
+let earlyLossActive=false; // Fix 3: track if early loss has been shown
+
 function showEarlyLossModal(data) {
   const modal=document.getElementById('early-loss-modal'); if (!modal) return;
+  earlyLossActive=true; // Fix 3: unlock skip button
   document.getElementById('early-loss-title').textContent=`${escHtml(data.bidderName)} has lost the bid!`;
   document.getElementById('early-loss-body').textContent=
-    `Bid: ${data.bid} pts. Team has earned ${data.teamPtsNow} pts so far and can win at most ${data.maxPossible} pts from remaining tricks – not enough to reach the bid.`;
+    `Bid: ${data.bid} pts. Team earned ${data.teamPtsNow} pts, maximum possible is ${data.maxPossible} pts — bid cannot be reached.`;
   const skipBtn=document.getElementById('skip-score-modal-btn');
-  if (skipBtn) skipBtn.style.display=myIndex===0?'':'none'; // only host sees skip
+  if (skipBtn) skipBtn.style.display=myIndex===0?'block':'none';
   modal.classList.remove('hidden'); playSound('error');
 }
 function closeEarlyLoss() { document.getElementById('early-loss-modal').classList.add('hidden'); }
 
 /* ══════════════════════════════════════════════
-   SCORING  (Feature 5: sorted by total descending)
+   SCORING – Fix 6: Total first, sorted descending
    ══════════════════════════════════════════════ */
 function showScoringScreen(data) {
+  earlyLossActive=false;
   showScreen('scoring-screen');
   document.getElementById('score-title').textContent=data.won?'🏆 Bidder\'s Team Won!':'❌ Bidder\'s Team Lost!';
   const bidderName=escHtml(data.bidderName);
@@ -666,28 +688,29 @@ function showScoringScreen(data) {
   const history=data.roundHistory||[]; const players=gameState?.players||[]; const nR=history.length;
   const thead=document.getElementById('score-thead-row');
   if (thead) {
+    // Fix 6: Total first
     let h=`<th style="text-align:left">#</th><th style="text-align:left">Player</th>`;
+    h+=`<th style="border-right:1px solid rgba(255,255,255,.15);background:rgba(240,208,80,.08)">Total</th>`;
     for (let r=0;r<nR;r++) h+=`<th>R${r+1}</th>`;
-    h+=`<th style="border-left:1px solid rgba(255,255,255,.12)">Total</th>`;
     thead.innerHTML=h;
   }
 
-  // Feature 5: sort players by total score descending
   const sorted=players.map((p,i)=>({p,i,total:data.totalScores?.[i]??0})).sort((a,b)=>b.total-a.total);
 
   document.getElementById('score-body').innerHTML=sorted.map(({p,i},rank)=>{
     const isMe=i===myIndex;
+    const total=data.totalScores?.[i]??0;
+    const tCls=total>0?'positive':total<0?'negative':'zero';
     let row=`<tr class="${isMe?'me-row':''}${rank===0?' rank-1':''}">`;
     const medal=rank===0?'🥇':rank===1?'🥈':rank===2?'🥉':String(rank+1);
     row+=`<td style="text-align:center">${medal}</td>`;
     row+=`<td style="text-align:left;font-weight:600">${escHtml(p.name)}${p.isBot?' 🤖':''}${isMe?' <em>(you)</em>':''}</td>`;
+    row+=`<td class="${tCls}" style="font-weight:800;border-right:1px solid rgba(255,255,255,.15);background:rgba(240,208,80,.05)">${total>=0?'+':''}${total}</td>`;
     for (const rnd of history) {
-      const sc=rnd.scores?.[i]??0; const cls=sc>0?'positive':sc<0?'negative':'zero';
+      const sc=rnd.scores?.[i]??0; const cls2=sc>0?'positive':sc<0?'negative':'zero';
       const latest=rnd.roundNum===nR;
-      row+=`<td class="${cls}" style="${latest?'background:rgba(255,255,255,.06)':''}">${sc>=0?'+':''}${sc}</td>`;
+      row+=`<td class="${cls2}" style="${latest?'background:rgba(255,255,255,.05)':''}">${sc>=0?'+':''}${sc}</td>`;
     }
-    const total=data.totalScores?.[i]??0; const tCls=total>0?'positive':total<0?'negative':'zero';
-    row+=`<td class="${tCls}" style="font-weight:700;border-left:1px solid rgba(255,255,255,.12)">${total>=0?'+':''}${total}</td>`;
     return row+'</tr>';
   }).join('');
 
@@ -709,29 +732,94 @@ function cancelGame() {
 }
 
 /* ══════════════════════════════════════════════
-   PODIUM + FIREWORKS
+   FIX 9 – BAR CHART FINAL SCREEN
+   Replaces podium. Shows 5 players L→R in descending
+   score order, animated bars, winner at left.
    ══════════════════════════════════════════════ */
-socket.on('podium',data=>showPodium(data));
-function showPodium(data) {
+socket.on('podium',data=>showBarChart(data));
+
+function showBarChart(data) {
   document.querySelectorAll('.screen').forEach(s=>s.classList.add('hidden'));
-  document.getElementById('podium-screen').classList.remove('hidden');
-  const standings=data.standings||[], matchRounds=data.matchRounds||0;
-  document.getElementById('podium-rounds').textContent=matchRounds>0?`After ${matchRounds} round${matchRounds!==1?'s':''}`:' ';
-  [1,2,3].forEach(pos=>{
-    const p=standings[pos-1]; const block=document.getElementById(`pod-${pos}`); if(!block) return;
-    if (p) { block.querySelector('.pod-name').textContent=p.name; block.querySelector('.pod-score').textContent=(p.totalScore>=0?'+':'')+p.totalScore+' pts'; block.style.display='flex'; }
-    else block.style.display='none';
+  const screen=document.getElementById('podium-screen');
+  screen.classList.remove('hidden');
+
+  const standings  = data.standings   || [];
+  const matchRounds= data.matchRounds || 0;
+
+  document.getElementById('podium-title').textContent='🏆 Final Standings';
+  document.getElementById('podium-rounds').textContent=
+    matchRounds>0?`After ${matchRounds} round${matchRounds!==1?'s':''}`:' ';
+
+  // Build bar chart inside podium-stage
+  const stage=document.getElementById('podium-stage');
+  stage.innerHTML='';
+  stage.style.cssText='display:flex;align-items:flex-end;gap:10px;z-index:2;margin-bottom:16px;padding:0 12px;';
+
+  // Clear podium-rest
+  document.getElementById('podium-rest').innerHTML='';
+
+  if (standings.length===0) { _resetToStart('No scores yet.'); return; }
+
+  // Max score for bar scaling (min 1 to avoid division by zero)
+  const scores = standings.map(s=>s.totalScore);
+  const maxAbs  = Math.max(1, ...scores.map(s=>Math.abs(s)));
+  const MAX_BAR = 140; // px height for highest bar
+  const MIN_BAR = 20;
+
+  const COLORS = [
+    '#f0d080','#c0c0c0','#cd7f32','#88ccff','#88ff99'
+  ];
+  const MEDALS = ['🥇','🥈','🥉','',''];
+
+  standings.forEach((player, rank) => {
+    const col  = COLORS[rank] || '#aaa';
+    const barH = Math.max(MIN_BAR, Math.round(MAX_BAR * Math.abs(player.totalScore) / maxAbs));
+    const scoreLabel = (player.totalScore>=0?'+':'')+player.totalScore+' pts';
+    const isNeg = player.totalScore < 0;
+
+    const block = document.createElement('div');
+    block.style.cssText=`
+      display:flex;flex-direction:column;align-items:center;
+      flex:1;max-width:90px;
+      animation:bar-rise .7s cubic-bezier(0.34,1.2,0.64,1) ${rank*0.15}s both;
+    `;
+    block.innerHTML=`
+      <div style="font-family:'DM Sans',sans-serif;font-size:12px;color:${col};font-weight:700;margin-bottom:4px">${scoreLabel}</div>
+      <div style="font-family:'Playfair Display',serif;font-size:13px;color:${col};text-align:center;margin-bottom:6px;text-shadow:0 0 10px ${col};max-width:80px;word-break:break-word">${escHtml(player.name)}${player.isBot?' 🤖':''}</div>
+      <div style="font-size:22px;margin-bottom:6px">${MEDALS[rank]||''}</div>
+      <div style="
+        width:100%;height:${barH}px;
+        background:linear-gradient(180deg,${col} 0%,${isNeg?'rgba(255,80,80,0.3)':'rgba(0,0,0,0.3)'} 100%);
+        border-radius:6px 6px 0 0;
+        border:1px solid rgba(255,255,255,.15);
+        box-shadow:0 0 16px ${col}44;
+        animation:bar-glow 2s ease-in-out ${rank*0.15+0.7}s infinite alternate;
+      "></div>
+      <div style="font-size:10px;color:rgba(255,255,255,.4);font-family:'DM Sans',sans-serif;margin-top:4px">${rank+1}</div>
+    `;
+    stage.appendChild(block);
   });
-  const rest=document.getElementById('podium-rest'); rest.innerHTML='';
-  for (let i=3;i<standings.length;i++) {
-    const p=standings[i]; const div=document.createElement('div'); div.className='pod-other';
-    div.innerHTML=`<strong>${escHtml(p.name)}${p.isBot?' 🤖':''}</strong>${(p.totalScore>=0?'+':'')+p.totalScore} pts`;
-    rest.appendChild(div);
+
+  // Inject keyframes if not already there
+  if (!document.getElementById('bar-anim-style')) {
+    const s=document.createElement('style'); s.id='bar-anim-style';
+    s.textContent=`
+      @keyframes bar-rise { from{transform:scaleY(0) translateY(20px);opacity:0;} to{transform:scaleY(1) translateY(0);opacity:1;} }
+      @keyframes bar-glow { from{filter:brightness(1);} to{filter:brightness(1.3);} }
+    `;
+    document.head.appendChild(s);
   }
+
   startFireworks();
-  let secs=5; const cdEl=document.getElementById('podium-countdown');
+
+  let secs=8;
+  const cdEl=document.getElementById('podium-countdown');
   cdEl.textContent=`Returning to start in ${secs}s…`;
-  const iv=setInterval(()=>{ secs--; if(secs<=0){clearInterval(iv);stopFireworks();_resetToStart('Thanks for playing!');}else cdEl.textContent=`Returning in ${secs}s…`; },1000);
+  const iv=setInterval(()=>{
+    secs--;
+    if (secs<=0) { clearInterval(iv); stopFireworks(); _resetToStart('Thanks for playing!'); }
+    else cdEl.textContent=`Returning in ${secs}s…`;
+  },1000);
 }
 
 let fwId=null, fwParts=[];

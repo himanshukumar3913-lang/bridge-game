@@ -93,99 +93,184 @@ function totalRemainingPts(players) {
 //  BOT AI  (Feature 9 – improved)
 // ══════════════════════════════════════════════════════
 
+// ── BOT AI (Advanced – Feature 10) ──
+
+/**
+ * Bidding: estimate full-hand value + team contribution.
+ * We only have 6 cards at bid time; scale up to 10, then add expected
+ * teammate contribution (they hold 2/4 of remaining cards on average).
+ */
 function botChooseBid(hand, currentHighest) {
-  const pts = hand.reduce((s,c)=>s+cardPoints(c),0);
-  // Count high cards (A, K, Q) for confidence
-  const highCards = hand.filter(c=>['A','K','Q'].includes(c.rank)).length;
-  // Bid 75-85% of hand value depending on high card count
-  const confidence = 0.72 + highCards * 0.02;
-  const raw = Math.round(pts * confidence / 5) * 5;
+  const handPts     = hand.reduce((s,c)=>s+cardPoints(c),0);
+  const aces        = hand.filter(c=>c.rank==='A').length;
+  const highCount   = hand.filter(c=>['A','K','Q'].includes(c.rank)).length;
+  const has3Spades  = hand.some(c=>c.rank==='3'&&c.suit==='spades');
+
+  // Scale 6-card hand to estimated full 10-card value
+  const fullHandEst = handPts * (10/6);
+  // Teammates control 2 of the remaining 4 players' cards
+  const teammatePts = (290 - fullHandEst) * 0.45 * 0.9;
+  const teamEst     = fullHandEst + teammatePts;
+
+  // Bonus for guaranteed high cards and the special 30-pt card
+  const bonus = aces * 18 + (highCount - aces) * 6 + (has3Spades ? 20 : 0);
+
+  const raw = Math.round((teamEst * 0.92 + bonus) / 5) * 5;
   const bid = Math.max(160, Math.min(290, raw));
   if (bid <= currentHighest) return 'pass';
   return bid;
 }
 
 function botChooseTrump(hand) {
-  // Prefer suit with most aces + kings, tie-break by count
   const suitScore = { spades:0, hearts:0, diamonds:0, clubs:0 };
   const suitCount = { spades:0, hearts:0, diamonds:0, clubs:0 };
-  for (const c of hand) {
-    suitScore[c.suit] += cardPoints(c);
-    suitCount[c.suit]++;
+  for (const c of hand) { suitScore[c.suit]+=cardPoints(c); suitCount[c.suit]++; }
+  // Bonus for length (≥3 cards) and having the Ace
+  for (const s of SUITS) {
+    if (suitCount[s]>=3) suitScore[s]+=12;
+    if (hand.some(c=>c.suit===s&&c.rank==='A')) suitScore[s]+=15;
   }
-  // Add bonus for length (having 3+ cards in a suit)
-  for (const s of SUITS) if (suitCount[s]>=3) suitScore[s]+=10;
   return SUITS.reduce((best,s)=>suitScore[s]>suitScore[best]?s:best,'spades');
 }
 
+/**
+ * Ask strategy: prioritise the 3♠ (30 pts), then Aces, then other high cards.
+ * Never ask for a card already in hand.
+ */
 function botChooseAsk(hand) {
   const myIds=new Set(hand.map(c=>c.id));
   const notMine=createDeck()
     .filter(c=>!myIds.has(c.id))
-    .sort((a,b)=>cardPoints(b)-cardPoints(a)||rankIndex(b.rank)-rankIndex(a.rank));
+    .sort((a,b)=>{
+      // 3♠ is highest priority
+      const a3s=(a.rank==='3'&&a.suit==='spades')?1:0;
+      const b3s=(b.rank==='3'&&b.suit==='spades')?1:0;
+      if (a3s!==b3s) return b3s-a3s;
+      return cardPoints(b)-cardPoints(a)||rankIndex(b.rank)-rankIndex(a.rank);
+    });
   return [notMine[0].id, notMine[1].id];
 }
 
 /**
- * Improved bot card selection:
- * - Tracks what high cards remain (via trick history)
- * - If teammate is already winning, duck (play low)
- * - If opposing team member is winning, counter with minimum needed
- * - Consider bid target: if team already won enough, play safe
+ * Advanced card play:
+ * @param {Card[]} hand         - bot's remaining hand
+ * @param {Array}  trick        - cards already played this trick
+ * @param {string} leadSuit     - suit led this trick
+ * @param {string} trump        - trump suit or 'notrump'
+ * @param {bool}   isOnBiddingTeam
+ * @param {number} teamPtsNow   - points won so far by bidding team
+ * @param {number} bid          - bid target
+ * @param {int[]}  teammates    - player indices of bot's allies
+ * @param {int}    myIdx        - bot's player index
+ * @param {Array}  players      - all player objects (for card counts)
+ * @param {Set}    playedCards  - Set of card ids already played in previous tricks
+ * @param {Card[]} askedCards   - the 2 publicly-known asked cards
  */
-function botChooseCard(hand, trick, leadSuit, trump, isOnBiddingTeam, teamPtsNow, bid, teammates, myIdx, players) {
+function botChooseCard(hand, trick, leadSuit, trump, isOnBiddingTeam,
+                       teamPtsNow, bid, teammates, myIdx, players,
+                       playedCards, askedCards) {
   const isNoTrump = !trump || trump===NO_TRUMP;
 
-  // Must-follow-suit rule
+  // Must-follow-suit
   const followable = leadSuit ? hand.filter(c=>c.suit===leadSuit) : [];
-  const pool = followable.length>0 ? followable : hand;
+  const pool       = followable.length>0 ? followable : hand;
 
   // Find current trick winner
   let currentWinner = trick.length>0 ? trick[0] : null;
-  for (const t of trick) if (beats(t.card, currentWinner.card, leadSuit, trump)) currentWinner=t;
+  for (const t of trick)
+    if (beats(t.card, currentWinner.card, leadSuit, trump)) currentWinner=t;
 
-  const teammateWinning = currentWinner && (currentWinner.playerIndex===myIdx || teammates.includes(currentWinner.playerIndex));
+  const teammateWinning = currentWinner &&
+    (currentWinner.playerIndex===myIdx || teammates.includes(currentWinner.playerIndex));
+
+  // Which cards are still live (not in hand AND not yet played)?
+  const liveCards = createDeck().filter(c => !playedCards.has(c.id) && !hand.some(h=>h.id===c.id));
+
+  // Is a specific asked card in this trick?
+  const askedInTrick = trick.some(t=>askedCards.some(a=>a.id===t.card.id));
+  const askedInPool  = pool.some(c=>askedCards.some(a=>a.id===c.id));
+
+  // ── Strategic helpers ──
+
+  // Cards that can beat current winner
+  function beaters(fromPool) {
+    if (!currentWinner) return fromPool;
+    return fromPool.filter(c=>beats(c, currentWinner.card, leadSuit, trump))
+                   .sort((a,b)=>rankIndex(a.rank)-rankIndex(b.rank));
+  }
+
+  // Lowest-value card in pool
+  function lowestWaste(fromPool) {
+    return [...fromPool].sort((a,b)=>cardPoints(a)-cardPoints(b)||rankIndex(a.rank)-rankIndex(b.rank))[0];
+  }
+
+  // ── Special: protect asked cards held by bidding-team teammate ──
+  // If I am the bidder and I asked for 3♠, and 3♠ is about to be played in this trick,
+  // play a high spade or trump to guarantee we win it.
+  if (isOnBiddingTeam && askedCards.length>0) {
+    const highValueAsked = askedCards.filter(a=>cardPoints(a)>=20);
+    for (const asked of highValueAsked) {
+      const askedInCurrentTrick = trick.some(t=>t.card.id===asked.id);
+      if (askedInCurrentTrick && !teammateWinning) {
+        // Dangerous – opponent might win! Try to beat with trump or high card
+        const safePlays = beaters(pool);
+        if (safePlays.length>0) return safePlays[0];
+      }
+    }
+  }
 
   if (isOnBiddingTeam) {
-    // If bid already secured (team has enough pts even with remaining), play relaxed
-    const remaining = totalRemainingPtsList(pool.concat([]));
+    // ── Bidding team strategy ──
+
+    // Bid already secured → play safe (dump low cards)
     if (teamPtsNow >= bid) {
-      // Play lowest to save high cards? Actually just play lowest
-      return [...pool].sort((a,b)=>cardPoints(a)-cardPoints(b)||rankIndex(a.rank)-rankIndex(b.rank))[0];
+      return lowestWaste(pool);
     }
 
-    // If teammate already winning, duck — don't waste a high card
+    // Trick has high-value asked card that's on our side winning → throw a bonus card
+    if (askedInTrick && teammateWinning && pool.length>0) {
+      return [...pool].sort((a,b)=>cardPoints(b)-cardPoints(a))[0];
+    }
+
+    // Teammate already winning early in trick → duck to save power
     if (teammateWinning && trick.length < 4) {
-      const sorted=[...pool].sort((a,b)=>cardPoints(a)-cardPoints(b)||rankIndex(a.rank)-rankIndex(b.rank));
-      return sorted[0];
+      return lowestWaste(pool);
     }
 
     // Try to win with minimum force
-    if (currentWinner) {
-      const canBeat=pool.filter(c=>beats(c,currentWinner.card,leadSuit,trump))
-                       .sort((a,b)=>rankIndex(a.rank)-rankIndex(b.rank));
-      if (canBeat.length>0) return canBeat[0];
+    const minBeaters = beaters(pool);
+    if (minBeaters.length>0) return minBeaters[0];
+
+    // Can't win in suit → try trump (if not notrump and ran out of lead suit)
+    if (!isNoTrump && followable.length===0) {
+      const trumpInHand = hand.filter(c=>c.suit===trump)
+                              .sort((a,b)=>rankIndex(a.rank)-rankIndex(b.rank));
+      if (trumpInHand.length>0) return trumpInHand[0];
     }
 
-    // Can't beat — play trump if available and not notrump
-    if (!isNoTrump && trump) {
-      const trumps=hand.filter(c=>c.suit===trump).sort((a,b)=>rankIndex(a.rank)-rankIndex(b.rank));
-      if (trumps.length>0 && followable.length===0) return trumps[0];
-    }
-
-    // Play highest in pool to maximise points
+    // Last resort: highest value card
     return [...pool].sort((a,b)=>cardPoints(b)-cardPoints(a)||rankIndex(b.rank)-rankIndex(a.rank))[0];
-  } else {
-    // Opposing team: avoid winning tricks that have point cards, dump low cards
-    const trickHasPoints = trick.reduce((s,t)=>s+cardPoints(t.card),0) + pool.reduce((s,c)=>s+cardPoints(c),0);
 
-    if (teammateWinning) {
-      // Our side winning — throw a high card to maximise opponent's loss!
-      return [...pool].sort((a,b)=>cardPoints(b)-cardPoints(a)||rankIndex(b.rank)-rankIndex(a.rank))[0];
+  } else {
+    // ── Opposing team strategy ──
+
+    // If an asked card (high value) is in this trick and WE might win it → go for it!
+    if (askedInTrick && !teammateWinning) {
+      const grab = beaters(pool);
+      if (grab.length>0) return grab[0]; // steal the trick with the asked card
     }
 
-    // They're winning — play lowest to not add points to their trick
-    return [...pool].sort((a,b)=>cardPoints(a)-cardPoints(b)||rankIndex(a.rank)-rankIndex(b.rank))[0];
+    // Teammate winning and trick has points → throw our highest-value card (maximise point capture)
+    if (teammateWinning) {
+      const trickPtsNow = trick.reduce((s,t)=>s+cardPoints(t.card),0);
+      if (trickPtsNow>0) {
+        return [...pool].sort((a,b)=>cardPoints(b)-cardPoints(a))[0];
+      }
+      return lowestWaste(pool);
+    }
+
+    // Opponent winning → don't add points to their trick, dump lowest
+    return lowestWaste(pool);
   }
 }
 
@@ -215,6 +300,7 @@ class Game {
     this.lastTrick=[]; this.lastTrickWinner=-1; this.trickPts={};
     this.earlyLossShown=false;
     this.autoLastTrickInProgress=false; // Feature 4
+    this.playedCards=new Set(); // Fix 10: memory of all played card ids
 
     this.roundScores={}; this.totalScores={}; this.lastGameover=null;
     this.roundHistory=[]; this.matchRound=0;
@@ -260,6 +346,28 @@ class Game {
     if (p) { p.disconnected=true; p.lastSeen=Date.now(); p.socketId=null; }
   }
 
+  // Fix 8: voluntarily exit during game — slot becomes open for a new joiner
+  vacatePlayer(playerIndex) {
+    const p=this.players[playerIndex]; if (!p) return;
+    p.socketId=null; p.disconnected=false;
+    p.vacated=true; // different from disconnected — this slot is open for takeover
+    p.lastSeen=Date.now();
+  }
+
+  // Fix 8: a new player takes over a vacated slot
+  takeoverSlot(socketId, newName) {
+    const idx=this.players.findIndex(p=>p.vacated);
+    if (idx===-1) return -1;
+    const p=this.players[idx];
+    p.socketId=socketId; p.name=newName; p.vacated=false; p.disconnected=false;
+    p.lastSeen=Date.now(); p.isBot=false;
+    return idx;
+  }
+
+  hasVacantSlot() {
+    return this.players.some(p=>p.vacated);
+  }
+
   removePlayer(targetIdx) {
     if (this.phase!=='waiting') return null;
     if (targetIdx===0||targetIdx<0||targetIdx>=this.players.length) return null;
@@ -289,6 +397,7 @@ class Game {
     this.lastTrick=[]; this.lastTrickWinner=-1;
     this.lastGameover=null; this.earlyLossShown=false;
     this.autoLastTrickInProgress=false;
+    this.playedCards=new Set();
     for (let i=0;i<5;i++) {
       this.players[i].cards=[]; this.trickPts[i]=0;
       this.roundScores[i]=0; this.reveal[i]=0;
@@ -300,15 +409,7 @@ class Game {
         this.players[(this.dealer+1+p)%5].cards.push(this.deck.pop());
     for (let i=0;i<5;i++) this.players[i].cards=sortCards(this.players[i].cards);
     this.currentBidder=(this.dealer+4)%5;
-
-    // Feature 2: check if any player holds all 4 Aces
-    for (let i=0;i<5;i++) {
-      const aces=this.players[i].cards.filter(c=>c.rank==='A');
-      if (aces.length===4) {
-        return { illegalDeal:true, playerName:this.players[i].name };
-      }
-    }
-    return null;
+    return null; // illegal deal checked after Deal 2 in setTrump
   }
 
   // ── Bidding ──
@@ -349,6 +450,13 @@ class Game {
       for (let p=0;p<5;p++)
         this.players[(this.dealer+1+p)%5].cards.push(this.deck.pop());
     for (let i=0;i<5;i++) this.players[i].cards=sortCards(this.players[i].cards);
+
+    // Fix 2: check illegal deal AFTER Deal 2 (full 10-card hands)
+    for (let i=0;i<5;i++) {
+      if (this.players[i].cards.filter(c=>c.rank==='A').length===4)
+        return {illegalDeal:true, playerName:this.players[i].name};
+    }
+
     this.phase='ask'; return null;
   }
 
@@ -440,6 +548,8 @@ class Game {
     };
 
     this.lastTrick=[...this.trick];
+    // Fix 10: record all played cards for bot memory
+    for (const play of this.trick) this.playedCards.add(play.card.id);
     this.trick=[]; this.leadSuit=null;
 
     if (this.round===10) return {...result,...this.calculateFinalScores()};
@@ -517,6 +627,7 @@ class Game {
         trickPts:this.trickPts[i]||0, roundScore:this.roundScores[i]||0,
         totalScore:this.totalScores[i]||0, reveal:this.reveal[i]||0,
         disconnected:p.disconnected||false, isBot:p.isBot||false,
+        vacated:p.vacated||false,
       })),
       viewerCount:this.viewers.length,
       dealer:this.dealer, currentBidder:this.currentBidder,
@@ -575,7 +686,8 @@ function scheduleBotTurn(roomId) {
     const teamPtsNow=(g.trickPts[bidderIdx]||0)+g.teammates.reduce((s,t)=>s+(g.trickPts[t]||0),0);
     const card=botChooseCard(
       g.players[g.turnPlayer].cards, g.trick, g.leadSuit, g.trump,
-      isTeam, teamPtsNow, g.highestBid, g.teammates, g.turnPlayer, g.players
+      isTeam, teamPtsNow, g.highestBid, g.teammates, g.turnPlayer, g.players,
+      g.playedCards, g.askedCards  // Fix 10: pass memory
     );
     const result=g.playCard(g.turnPlayer, card.id);
     if (typeof result==='string') return;
@@ -648,32 +760,32 @@ function autoPlayLastTrick(roomId, leaderIdx) {
   broadcastState(roomId);
   broadcast(roomId,'msg',{text:'🃏 Last trick – auto-playing!'});
 
-  // Build play order starting from leaderIdx, anti-clockwise
   const order=[];
-  for (let i=0;i<5;i++) order.push((leaderIdx+i*4)%5); // anti-clockwise = +4 mod 5
+  for (let i=0;i<5;i++) order.push((leaderIdx+i*4)%5);
 
-  let delay=500;
-  for (const playerIdx of order) {
+  let delay=400;
+  let finalResult=null;
+
+  for (let step=0;step<5;step++) {
+    const playerIdx=order[step];
     setTimeout(()=>{
       const g=games[roomId]; if (!g||g.phase!=='playing') return;
       const hand=g.players[playerIdx].cards;
       if (hand.length===0) return;
-      const cardId=hand[0].id; // only 1 card remains
-      // Temporarily disable lock for this auto-play
+      const cardId=hand[0].id;
       g.autoLastTrickInProgress=false;
       const result=g.playCard(playerIdx, cardId);
-      g.autoLastTrickInProgress = (result?.cardPlayed===true); // re-lock if trick not done
+      g.autoLastTrickInProgress=(result?.cardPlayed===true);
       broadcastState(roomId);
-      if (result?.cardPlayed) {
-        // card played, trick not done yet, keep going
-      }
       if (result?.trickDone||result?.gameOver) {
         g.autoLastTrickInProgress=false;
+        finalResult=result;
         broadcast(roomId,'trick',result);
         if (result.earlyLoss) broadcast(roomId,'early_loss',result.earlyLoss);
         if (result.gameOver) {
-          // Hold 7 seconds then emit gameover
-          setTimeout(()=>broadcast(roomId,'gameover',result),7000);
+          // Fix 4: table shows for 5s, then sidebar for 7s → gameover fires after 5s
+          // Client scoring screen is delayed 7s by client on receipt of gameover
+          setTimeout(()=>broadcast(roomId,'gameover',result), 5000);
         }
       }
     }, delay);
@@ -727,7 +839,8 @@ io.on('connection', socket=>{
   // ── Create ──
   socket.on('create',({name})=>{
     let roomId;
-    do { roomId=Math.random().toString(36).slice(2,8).toUpperCase(); } while(games[roomId]);
+    // Fix 7: 4-digit numeric room code (1000-9999)
+    do { roomId=String(Math.floor(1000+Math.random()*9000)); } while(games[roomId]);
     const game=new Game(roomId);
     const idx=game.addPlayer(socket.id,name);
     games[roomId]=game;
@@ -736,13 +849,13 @@ io.on('connection', socket=>{
     broadcastState(roomId);
   });
 
-  // ── Join (player or viewer) ──
+  // ── Join (player, viewer, or takeover vacated slot) ──
   socket.on('join',({roomId,name})=>{
     const game=games[roomId];
     if (!game) { socket.emit('err','Room not found'); return; }
 
     // Reconnect existing player by name
-    const existingIdx=game.players.findIndex(p=>p.name===name);
+    const existingIdx=game.players.findIndex(p=>p.name===name&&!p.vacated);
     if (existingIdx!==-1) {
       const idx=game.reconnectPlayer(socket.id,name,existingIdx);
       if (idx!==-1) {
@@ -756,7 +869,20 @@ io.on('connection', socket=>{
       }
     }
 
-    // Feature 10: if game started and all 5 players present, try to join as viewer
+    // Fix 8: take over a vacated slot during active game
+    if (game.phase!=='waiting' && game.hasVacantSlot()) {
+      const idx=game.takeoverSlot(socket.id, name);
+      if (idx!==-1) {
+        socket.join(roomId); socket.roomId=roomId; socket.playerIndex=idx;
+        socket.emit('joined',{roomId,playerIndex:idx,name});
+        broadcastState(roomId);
+        broadcast(roomId,'msg',{text:`${name} joined and took over an empty slot`});
+        if (game.phase==='playing') scheduleBotTurn(roomId);
+        return;
+      }
+    }
+
+    // Feature 10: join as viewer if game in progress
     if (game.phase!=='waiting') {
       const alreadyViewer=game.viewers.find(v=>v.name===name);
       if (alreadyViewer) {
@@ -773,12 +899,12 @@ io.on('connection', socket=>{
           socket.join(roomId); socket.roomId=roomId; socket.isViewer=true;
           socket.emit('joined_as_viewer',{roomId,name,viewerCount:game.viewers.length});
           socket.emit('state',game.viewerStateFor());
-          broadcastState(roomId); // updates viewer count for players
+          broadcastState(roomId);
           broadcast(roomId,'msg',{text:`👁 ${name} is watching`});
           return;
         }
       }
-      socket.emit('err','Game started – use your original name to rejoin, or viewer slots are full');
+      socket.emit('err','Game in progress – use your original name to rejoin, or viewer slots are full');
       return;
     }
 
@@ -869,8 +995,22 @@ io.on('connection', socket=>{
   // ── Trump ──
   socket.on('trump',({suit})=>{
     const game=games[socket.roomId]; if (!game) return;
-    const err=game.setTrump(socket.playerIndex,suit);
-    if (err) { socket.emit('err',err); return; }
+    const result=game.setTrump(socket.playerIndex,suit);
+    // setTrump returns null (ok), string (error), or {illegalDeal} object
+    if (typeof result==='string') { socket.emit('err',result); return; }
+    if (result?.illegalDeal) {
+      // Reset to pre-trump state and redeal
+      broadcast(socket.roomId,'illegal_deal',{playerName:result.playerName});
+      setTimeout(()=>{
+        const g=games[socket.roomId]; if (!g) return;
+        g.dealer=(g.dealer+1)%5;
+        g.startRound();
+        broadcastState(socket.roomId);
+        broadcast(socket.roomId,'msg',{text:'Cards redealt due to illegal deal! Bidding begins.'});
+        scheduleBotBid(socket.roomId);
+      },3000);
+      return;
+    }
     const label=suit===NO_TRUMP?'No Trump':`${SUIT_SYMS[suit]} ${suit}`;
     broadcast(socket.roomId,'msg',{text:`Trump: ${label} – Deal 2 done! Ask phase.`});
     broadcastState(socket.roomId);
@@ -897,15 +1037,46 @@ io.on('connection', socket=>{
     handlePlayResult(socket.roomId, result);
   });
 
-  // ── Skip to score (Feature 3) ──
+  // ── Skip to score (Fix 3: only via early loss, remove from normal play button) ──
   socket.on('skip_to_score',()=>{
     const game=games[socket.roomId];
     if (!game||socket.playerIndex!==0||game.phase!=='playing') return;
+    if (!game.earlyLossShown) { socket.emit('err','Skip to score is only available after early loss is confirmed'); return; }
     const result=game.skipToScore();
     if (!result) return;
     broadcastState(socket.roomId);
     broadcast(socket.roomId,'gameover',result);
-    broadcast(socket.roomId,'msg',{text:'Host skipped to final scorecard'});
+    broadcast(socket.roomId,'msg',{text:'Host skipped to scorecard after early loss'});
+  });
+
+  // Fix 8: exit game during play — frees slot for new joiner
+  socket.on('exit_game',()=>{
+    const game=games[socket.roomId];
+    if (!game||socket.playerIndex===undefined) return;
+    if (game.phase==='waiting') {
+      // In lobby, use normal leave logic
+      if (socket.playerIndex===0) { socket.emit('err','Host cannot leave — use Cancel Room'); return; }
+      const name=game.players[socket.playerIndex]?.name||'A player';
+      game.removePlayer(socket.playerIndex);
+      const sockets=io.sockets.adapter.rooms.get(socket.roomId);
+      if (sockets) for (const sid of sockets) {
+        const s=io.sockets.sockets.get(sid);
+        if (s&&s.playerIndex>socket.playerIndex) s.playerIndex--;
+      }
+      socket.leave(socket.roomId); socket.emit('kicked',{reason:'You left the room'});
+      broadcast(game.roomId,'msg',{text:`${name} left the lobby`});
+      broadcastState(game.roomId);
+      socket.roomId=undefined; socket.playerIndex=undefined;
+    } else {
+      // During game: vacate slot so another player can take over
+      const name=game.players[socket.playerIndex]?.name||'A player';
+      game.vacatePlayer(socket.playerIndex);
+      socket.leave(socket.roomId);
+      socket.emit('kicked',{reason:'You exited the game. Another player can take your slot.'});
+      broadcast(game.roomId,'msg',{text:`⚠️ ${name} exited – slot is now open for a new player to join`});
+      broadcastState(game.roomId);
+      socket.roomId=undefined; socket.playerIndex=undefined;
+    }
   });
 
   // ── Next round ──

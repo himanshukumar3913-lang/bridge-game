@@ -122,6 +122,8 @@ body::after {
 .btn-cancel-game:hover { background:rgba(255,60,60,.28); }
 .btn-skip-score { background:rgba(255,200,50,.12);color:#ffdd80;border:1px solid rgba(255,200,50,.3);border-radius:5px;padding:3px 10px;font-family:var(--font-body);font-size:11px;font-weight:600;cursor:pointer;white-space:nowrap;transition:background .15s; }
 .btn-skip-score:hover { background:rgba(255,200,50,.22); }
+.btn-exit-game { background:rgba(255,80,80,.1);color:#ff9999;border:1px solid rgba(255,80,80,.25);border-radius:5px;padding:3px 10px;font-family:var(--font-body);font-size:11px;font-weight:600;cursor:pointer;white-space:nowrap;transition:background .15s;margin-left:4px; }
+.btn-exit-game:hover { background:rgba(255,80,80,.2); }
 
 /* ══════════════════════════════════════════════
    LOGIN
@@ -211,6 +213,7 @@ h1 { font-family:var(--font-head);font-size:46px;color:var(--gold-light);text-sh
 .player-chip.passed         { opacity:.42; }
 .player-chip.disconnected   { opacity:.48;border-color:rgba(255,150,0,.4);border-style:dashed; }
 .player-chip.bot-chip       { border-color:rgba(100,180,255,.45);background:rgba(100,180,255,.07); }
+.player-chip.vacated        { opacity:.45;border-color:rgba(255,80,80,.4);border-style:dashed;background:rgba(255,80,80,.04); }
 @keyframes pulse-turn { 0%,100%{box-shadow:0 0 0 0 rgba(255,230,50,.4);}50%{box-shadow:0 0 0 6px rgba(255,230,50,0);} }
 
 /* 3-column play area */
@@ -291,15 +294,9 @@ h1 { font-family:var(--font-head);font-size:46px;color:var(--gold-light);text-sh
   display: flex; flex-direction: column; align-items: center;
   line-height: 1;
 }
-.card .c-br {
-  position: absolute; bottom: 4px; right: 6px;
-  display: flex; flex-direction: column; align-items: center;
-  line-height: 1;
-  transform: rotate(180deg);
-}
 .card .c-rank  { font-size: 18px; line-height: 1; }
 .card .c-suit  { font-size: 14px; line-height: 1; margin-top: 1px; }
-.card .c-center { font-size: 28px; line-height: 1; } /* large central suit */
+.card .c-center-big { font-size: 32px; line-height: 1; margin-top: 4px; } /* Fix 5: single larger central suit */
 .card .c-special { position:absolute;top:3px;right:5px;font-size:9px;color:#994400;font-family:var(--font-body); }
 
 /* Trick cards */
@@ -307,7 +304,7 @@ h1 { font-family:var(--font-head);font-size:46px;color:var(--gold-light);text-sh
 .card.trick:hover { transform:none;box-shadow:0 4px 12px rgba(0,0,0,.45); }
 .card.trick .c-rank { font-size:16px; }
 .card.trick .c-suit { font-size:12px; }
-.card.trick .c-center { font-size:22px; }
+.card.trick .c-center-big { font-size:24px; }
 
 /* Winner glow */
 .card.trick.winner { box-shadow:0 4px 12px rgba(0,0,0,.45), 0 0 0 2px var(--gold), 0 0 14px rgba(240,208,80,.5); animation:winner-glow 1.5s ease-in-out infinite alternate; }
@@ -318,7 +315,7 @@ h1 { font-family:var(--font-head);font-size:46px;color:var(--gold-light);text-sh
 .card.mini:hover { transform:none;box-shadow:0 2px 6px rgba(0,0,0,.4); }
 .card.mini .c-rank { font-size:12px; }
 .card.mini .c-suit { font-size:9px; }
-.card.mini .c-center { font-size:14px; }
+.card.mini .c-center-big { font-size:14px; }
 
 /* Bid controls */
 .bid-row { display:flex;flex-direction:column;gap:8px; }
@@ -331,6 +328,19 @@ h1 { font-family:var(--font-head);font-size:46px;color:var(--gold-light);text-sh
 .btn-pass:hover { background:rgba(255,255,255,.18); }
 
 /* Trump grid */
+/* Trump options row – Fix 1: flex-wrap so all 5 fit */
+.trump-options-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  justify-content: center;
+}
+.trump-options-row .suit-opt {
+  flex: 1 1 calc(20% - 6px);
+  min-width: 52px;
+  max-width: 90px;
+}
+
 .suit-grid { display:grid;grid-template-columns:repeat(5,1fr);gap:7px; }
 .suit-opt { background:rgba(255,255,255,.08);border:1.5px solid rgba(255,255,255,.12);border-radius:8px;padding:10px 6px;text-align:center;cursor:pointer;transition:all .15s;font-family:var(--font-head);font-size:12px; }
 .suit-opt:hover { background:rgba(255,255,255,.16);border-color:var(--gold); }
@@ -426,10 +436,10 @@ h1 { font-family:var(--font-head);font-size:46px;color:var(--gold-light);text-sh
   .card { width:48px;height:70px; }
   .card .c-rank { font-size:15px; }
   .card .c-suit { font-size:12px; }
-  .card .c-center { font-size:20px; }
+  .card .c-center-big { font-size:20px; }
   .card.trick { width:44px;height:64px; }
   .card.mini  { width:30px;height:44px; }
-  .card.mini .c-center { font-size:13px; }
+  .card.mini .c-center-big { font-size:13px; }
   #action-panel { padding:5px 8px; }
   .bid-val { font-size:19px; }
   .suit-grid { gap:4px; }
@@ -444,7 +454,7 @@ h1 { font-family:var(--font-head);font-size:46px;color:var(--gold-light);text-sh
   #play-area { grid-template-columns:58px 1fr 58px;gap:3px; }
   .card { width:42px;height:62px; }
   .card .c-rank { font-size:14px; }
-  .card .c-center { font-size:18px; }
+  .card .c-center-big { font-size:18px; }
 }
 
 @media (max-width:320px) and (orientation:portrait) {
@@ -477,10 +487,10 @@ h1 { font-family:var(--font-head);font-size:46px;color:var(--gold-light);text-sh
   .card { width:42px;height:60px; }
   .card .c-rank { font-size:14px; }
   .card .c-suit { font-size:11px; }
-  .card .c-center { font-size:17px; }
+  .card .c-center-big { font-size:17px; }
   .card.trick { width:36px;height:52px; }
   .card.mini  { width:26px;height:38px; }
-  .card.mini .c-center { font-size:11px; }
+  .card.mini .c-center-big { font-size:11px; }
   #action-panel { padding:4px 8px; }
   .bid-val { font-size:17px; }
   .suit-grid { gap:3px; }

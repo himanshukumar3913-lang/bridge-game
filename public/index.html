@@ -39,8 +39,8 @@
         <button class="btn-primary" onclick="createRoom()">Create Room</button>
       </div>
       <div id="pane-join" class="tab-pane hidden">
-        <label>Room Code</label>
-        <input id="room-input" type="text" placeholder="E.g. AB12CD" maxlength="6" style="text-transform:uppercase" autocomplete="off">
+        <label>Room Code (4 digits)</label>
+        <input id="room-input" type="number" placeholder="e.g. 5823" maxlength="4" min="1000" max="9999" autocomplete="off">
         <p class="hint" style="color:rgba(100,200,255,0.7)">If 5 players are already in, you'll join as a <strong>viewer</strong>.</p>
         <button class="btn-primary" onclick="joinRoom()">Join / Watch</button>
       </div>
@@ -62,7 +62,7 @@
     <div id="lobby-status">Waiting… <span id="player-count">1</span>/5</div>
     <div id="bot-section"></div>
     <button id="start-btn"        class="btn-primary hidden" onclick="startGame()">Start Game ▶</button>
-    <button id="leave-btn"        class="btn-leave   hidden" onclick="leaveRoom()">🚪 Leave Room</button>
+    <button id="leave-btn"        class="btn-leave   hidden" onclick="exitGame()">🚪 Leave</button>
     <button id="cancel-lobby-btn" class="btn-leave   hidden" onclick="cancelGame()">✕ Cancel Room</button>
     <p id="lobby-hint" class="hint"></p>
   </div>
@@ -93,6 +93,7 @@
     <span id="info-viewer" class="chip chip-viewer hidden">👁 Viewers: <span id="viewer-count">0</span></span>
     <button id="cancel-game-btn"  class="btn-cancel-game hidden" onclick="cancelGame()">✕ End</button>
     <button id="skip-score-btn"   class="btn-skip-score  hidden" onclick="skipToScore()">⏭ Skip to Score</button>
+    <button id="exit-game-btn"    class="btn-exit-game" onclick="exitGame()">🚪 Exit</button>
   </div>
   <div id="msg-bar"></div>
 
