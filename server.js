@@ -20,10 +20,26 @@ const io     = new Server(server, {
 
 app.use(express.static(path.join(__dirname,'public')));
 app.get('/health',(_,res)=>res.send('OK'));
-// BUG FIX 3: explicit ping endpoint for UptimeRobot / cron keep-alive
-// Point a free monitor at https://your-app.onrender.com/ping every 5 minutes
-// to prevent Render free tier from sleeping and losing in-memory game state
 app.get('/ping',(_,res)=>res.json({status:'alive',rooms:Object.keys(games).length,ts:Date.now()}));
+
+// Fix 3 & 4: prevent Render free-tier sleep that wipes in-memory game state.
+// Strategy A: self-ping via RENDER_EXTERNAL_URL (set this in Render env vars)
+// Strategy B: fallback self-ping via localhost after server is ready
+const SELF_URL = process.env.RENDER_EXTERNAL_URL || '';
+function doSelfPing() {
+  try {
+    if (SELF_URL) {
+      const mod = SELF_URL.startsWith('https') ? require('https') : require('http');
+      mod.get(SELF_URL + '/ping', r => r.resume()).on('error', () => {});
+    } else {
+      // Fallback: ping our own localhost port
+      require('http').get(`http://localhost:${process.env.PORT||3000}/ping`, r => r.resume()).on('error', () => {});
+    }
+  } catch(e) {}
+}
+// Ping every 4 minutes (Render sleeps after 15 min idle)
+setInterval(doSelfPing, 4 * 60 * 1000);
+console.log('Self-ping scheduled every 4 min', SELF_URL ? `→ ${SELF_URL}/ping` : '(localhost fallback)');
 
 // Session log file (CSV)
 const LOG_FILE = path.join(__dirname,'sessions.csv');
@@ -235,7 +251,11 @@ class Game {
     this.roundScores={}; this.totalScores={}; this.sessionTrickPts={};
     this.lastGameover=null; this.roundHistory=[]; this.matchRound=0;
     this._autoBidTimers={};
+    this._botBidActive=false;
+    this._roundGen=0; // Fix 2: incremented each round, bots check this to abort stale chains
     this.chatLog=[];
+    this._banterCooldown={}; // Fix 7: { playerIndex: lastSentTimestamp }
+    this.trumpChooserName=''; // Fix 1: who picked trump
   }
 
   // ── Player management ──
@@ -338,7 +358,10 @@ class Game {
 
   startRound() {
     if (!this._startTime) this._startTime=Date.now();
-    this._botBidActive=false; // BUG FIX 2: always reset chain lock on new round
+    this._botBidActive=false;
+    this._roundGen=(this._roundGen||0)+1; // Fix 2: new generation — stale bot chains will see mismatch
+    this._banterCooldown={};
+    this.trumpChooserName=''; // Fix 1
     this.deck=shuffle(createDeck());
     this.phase='bidding';
     this.passed=new Set(); this.bidLog=[];
@@ -394,6 +417,7 @@ class Game {
     if (playerIdx!==this.highestBidder) return 'Only the highest bidder chooses trump';
     if (!SUITS.includes(suit)&&suit!==NO_TRUMP) return 'Invalid trump choice';
     this.trump=suit===NO_TRUMP?NO_TRUMP:suit;
+    this.trumpChooserName=this.players[playerIdx]?.name||''; // Fix 1
     for (let c=0;c<4;c++)
       for (let p=0;p<5;p++)
         this.players[(this.dealer+1+p)%5].cards.push(this.deck.pop());
@@ -551,7 +575,8 @@ class Game {
       dealer:this.dealer, currentBidder:this.currentBidder,
       highestBid:this.highestBid, highestBidder:this.highestBidder,
       passed:[...this.passed], bidLog:this.bidLog,
-      trump:this.trump, askedCardIds:this.askedCards.map(c=>c.id),
+      trump:this.trump, trumpChooserName:this.trumpChooserName,
+      askedCardIds:this.askedCards.map(c=>c.id),
       teammates:this.teammates,
       turnPlayer:this.turnPlayer, trick:this.trick,
       lastTrick:this.lastTrick, lastTrickWinner:this.lastTrickWinner,
@@ -592,8 +617,10 @@ function scheduleBotTurn(roomId) {
   const game=games[roomId]; if (!game||game.phase!=='playing'||game.autoLastTrickInProgress) return;
   const cur=game.players[game.turnPlayer];
   if (!cur||!cur.isBot) return;
+  const myGen=game._roundGen; // Fix 2
   setTimeout(()=>{
     const g=games[roomId]; if (!g||g.phase!=='playing'||g.autoLastTrickInProgress) return;
+    if (g._roundGen!==myGen) return; // Fix 2: stale chain
     if (!g.players[g.turnPlayer]?.isBot) return;
     const bi=g.highestBidder, isTeam=g.turnPlayer===bi||g.teammates.includes(g.turnPlayer);
     const tp=(g.trickPts[bi]||0)+g.teammates.reduce((s,t)=>s+(g.trickPts[t]||0),0);
@@ -614,12 +641,14 @@ function scheduleBotBid(roomId) {
   const game=games[roomId]; if (!game||game.phase!=='bidding') return;
   const cur=game.players[game.currentBidder];
   if (!cur||!cur.isBot) return;
-  if (game._botBidActive) return; // already a chain running – don't spawn another
+  if (game._botBidActive) return; // already a chain running
   game._botBidActive=true;
+  const myGen=game._roundGen; // Fix 2: capture generation at schedule time
   setTimeout(()=>{
     const g=games[roomId];
-    if (!g) { return; }
+    if (!g) return;
     g._botBidActive=false;
+    if (g._roundGen!==myGen) return; // Fix 2: round changed — abort stale chain
     if (g.phase!=='bidding') return;
     if (!g.players[g.currentBidder]?.isBot) return;
     const bi=g.currentBidder, bn=g.players[bi]?.name||'Bot';
@@ -634,18 +663,18 @@ function scheduleBotBid(roomId) {
 
 function scheduleBotTrump(roomId) {
   const game=games[roomId]; if (!game||game.phase!=='trump') return;
+  const myGen=game._roundGen; // Fix 2: capture generation
   setTimeout(()=>{
     const g=games[roomId]; if (!g||g.phase!=='trump') return;
+    if (g._roundGen!==myGen) return; // Fix 2: stale chain — round changed
     if (!g.players[g.highestBidder]?.isBot) return;
     const suit=botChooseTrump(g.players[g.highestBidder].cards);
-    // BUG FIX 2: handle illegalDeal return from setTrump
     const result=g.setTrump(g.highestBidder,suit);
     if (result?.illegalDeal) {
       broadcast(roomId,'illegal_deal',{playerName:result.playerName});
       setTimeout(()=>{
         const g2=games[roomId]; if (!g2) return;
-        g2.dealer=(g2.dealer+1)%5;
-        g2.startRound();
+        g2.dealer=(g2.dealer+1)%5; g2.startRound();
         broadcastState(roomId);
         broadcast(roomId,'msg',{text:'Cards redealt due to illegal deal!'});
         scheduleBotBid(roomId);
@@ -661,8 +690,10 @@ function scheduleBotTrump(roomId) {
 
 function scheduleBotAsk(roomId) {
   const game=games[roomId]; if (!game||game.phase!=='ask') return;
+  const myGen=game._roundGen; // Fix 2: capture generation
   setTimeout(()=>{
     const g=games[roomId]; if (!g||g.phase!=='ask') return;
+    if (g._roundGen!==myGen) return; // Fix 2: stale chain
     if (!g.players[g.highestBidder]?.isBot) return;
     const ids=botChooseAsk(g.players[g.highestBidder].cards);
     const err=g.askForCards(g.highestBidder,ids); if (err) return;
@@ -973,14 +1004,27 @@ io.on('connection', socket=>{
   });
 
   // ── Chat / Banter ──
-  socket.on('chat',({message})=>{
+  socket.on('chat',({message, isBanter})=>{
     const game=games[socket.roomId]; if (!game) return;
     const name=socket.isViewer
       ? (game.viewers.find(v=>v.socketId===socket.id)?.name||'Viewer')
       : (game.players[socket.playerIndex]?.name||'?');
     const trimmed=(message||'').trim().slice(0,120);
     if (!trimmed) return;
+
+    // Fix 7: enforce 5-second cooldown per player for banter
+    if (isBanter) {
+      const key=socket.isViewer?`v_${socket.id}`:`p_${socket.playerIndex}`;
+      const last=game._banterCooldown[key]||0;
+      if (Date.now()-last < 5000) {
+        socket.emit('err','Wait a moment before sending another banter!');
+        return;
+      }
+      game._banterCooldown[key]=Date.now();
+    }
+
     const entry=game.addChat(name,trimmed);
+    entry.isBanter=!!isBanter; // tell clients to animate it
     broadcast(socket.roomId,'chat',entry);
   });
 

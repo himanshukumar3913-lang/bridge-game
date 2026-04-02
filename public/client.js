@@ -38,6 +38,11 @@ socket.on('err',msg=>{setMsg(msg);const le=el('login-error');if(le)le.textConten
 
 socket.on('state',state=>{
   gameState=state;
+  // Fix 1: show prominent banner once when trump is first chosen (phase transitions to ask/playing)
+  if(state.trump && state.trumpChooserName &&
+     (state.phase==='ask'||state.phase==='playing'||state.phase==='scoring')){
+    showTrumpBanner(state.trump, state.trumpChooserName);
+  }
   if(isViewer)renderViewer(state);else renderState(state);
   if(!_chatDone&&state.chatLog?.length>0){state.chatLog.forEach(e=>appendChat(e.name,e.msg,e.t));_chatDone=true;}
   if(!el('scorecard-modal')?.classList.contains('hidden'))buildScModal(state);
@@ -50,7 +55,6 @@ socket.on('early_loss',d=>showEarlyLoss(d));
 socket.on('podium',d=>showBarChart(d));
 socket.on('illegal_deal',({playerName})=>{const eb=el('illegal-deal-body');if(eb)eb.textContent=`${playerName} holds all 4 Aces – illegal deal! Redealing in 3 seconds.`;el('illegal-deal-modal')?.classList.remove('hidden');playSound('error');setTimeout(()=>el('illegal-deal-modal')?.classList.add('hidden'),4500);});
 socket.on('kicked',({reason})=>{clr();myIndex=-1;myRoomId='';myName='';gameState=null;isViewer=false;_chatDone=false;showScreen('login-screen');const le=el('login-error');if(le)le.textContent=reason||'Removed from room';});
-socket.on('chat',entry=>{appendChat(entry.name,entry.msg,entry.t);if(!chatOpen){chatUnread++;el('chat-unread')?.classList.remove('hidden');}playSound('chat');});
 setConn('connecting');
 
 function showScreen(id){document.querySelectorAll('.screen').forEach(s=>s.classList.toggle('hidden',s.id!==id));}
@@ -126,14 +130,24 @@ function renderRing(state){
 function renderInfoStrip(state){
   const rc=el('info-room-code');if(rc)rc.textContent=myRoomId?`🔑 ${myRoomId}`:'';
   const rn=el('info-room-name');if(rn){if(myRoomName){rn.textContent=myRoomName;rn.classList.remove('hidden');}else rn.classList.add('hidden');}
-  const LABELS={bidding:'Bidding',trump:'Trump',ask:'Ask',playing:`Trick ${state.round+1}/10`,scoring:'Over'};
-  const pi=el('info-phase');if(pi)pi.textContent=LABELS[state.phase]||state.phase;
-  const ti=el('info-trump');if(ti)ti.textContent=state.trump?(state.trump===NO_TRUMP?'🚫 NT':`${SUIT_SYM[state.trump]}`):'';
-  const bii=el('info-bid');if(bii)bii.textContent=state.highestBid>155?`${state.highestBid}`:'';
-  const ri=el('info-round');
-  if(state.phase==='playing'&&state.askedCardIds?.length===2){const asked=state.askedCardIds.map(id=>{const[r,s]=id.split('-');return r+SUIT_SYM[s];}).join('&');if(ri)ri.textContent=asked;}else if(ri)ri.textContent='';
-  const vi=el('info-viewer'),vc=el('viewer-count');if(vi&&vc){vc.textContent=state.viewerCount||0;vi.classList.toggle('hidden',!(state.viewerCount>0));}
-  const cg=el('cancel-game-btn');if(cg)cg.classList.toggle('hidden',myIndex!==0||isViewer);
+  const LABELS={bidding:'Bidding',trump:'Choose Trump',ask:'Ask Cards',playing:`Trick ${state.round+1}/10`,scoring:'Round Over'};
+  const ip=el('info-phase');if(ip)ip.textContent=LABELS[state.phase]||state.phase;
+  // Fix 1: Trump — show prominently in info strip with chooser name highlighted
+  const it=el('info-trump');
+  if(it){
+    if(state.trump){
+      const trumpLabel=state.trump===NO_TRUMP?'🚫 No Trump':`${SUIT_SYM[state.trump]} ${SUIT_NAME[state.trump]}`;
+      const chooser=state.trumpChooserName?` · ${state.trumpChooserName} chose`:'';
+      it.textContent=`${trumpLabel}${chooser}`;
+      it.style.fontWeight='700';
+      it.style.fontSize='13px';
+    } else { it.textContent=''; }
+  }
+  const ib=el('info-bid');if(ib)ib.textContent=state.highestBid>155?`Bid: ${state.highestBid} (${state.players[state.highestBidder]?.name||''})`:'';
+  if(state.phase==='playing'&&state.askedCardIds?.length===2){const asked=state.askedCardIds.map(id=>{const[r,s]=id.split('-');return r+SUIT_SYM[s];}).join(' & ');const ir=el('info-round');if(ir)ir.textContent=`Asked: ${asked}`;}else{const ir=el('info-round');if(ir)ir.textContent='';}
+  const vc=el('info-viewer');if(vc)vc.classList.toggle('hidden',(state.viewerCount||0)===0);const vcc=el('viewer-count');if(vcc)vcc.textContent=state.viewerCount||0;
+  const cancelBtn=el('cancel-game-btn');if(cancelBtn)cancelBtn.classList.toggle('hidden',myIndex!==0||isViewer);
+  const skipBtn=el('skip-score-btn');if(skipBtn)skipBtn.classList.add('hidden');
 }
 
 function renderTrickZone(state){
@@ -211,7 +225,7 @@ function doPass(){socket.emit('bid',{amount:'pass'});}
 function doTrump(suit){socket.emit('trump',{suit});}
 function doPlay(cardId){socket.emit('play',{cardId});}
 function skipToScore(){socket.emit('skip_to_score');closeEarlyLoss();}
-function nextRound(){socket.emit('next');playSound('shuffle');}
+function nextRound(){_lastTrumpShown='';el('trump-banner')?.classList.add('hidden');socket.emit('next');playSound('shuffle');}
 
 function openAskModal(){
   window._askSel=[];const myIds=new Set((gameState?.myCards||[]).map(c=>c.id));
@@ -225,14 +239,6 @@ function closeAskModal(){el('ask-modal')?.classList.add('hidden');}
 
 function openScorecardModal(){buildScModal(gameState);el('scorecard-modal')?.classList.remove('hidden');}
 function closeScorecardModal(){el('scorecard-modal')?.classList.add('hidden');}
-function buildScModal(state){
-  if(!state)return;const players=state.players||[],history=state.roundHistory||[],nR=history.length;
-  const thead=el('sc-modal-thead'),tbody=el('sc-modal-body');if(!thead||!tbody)return;
-  let h=`<th style="text-align:left">#</th><th style="text-align:left">Player</th>`;h+=`<th style="background:rgba(240,208,80,.1);border-right:1px solid rgba(255,255,255,.12)">Total</th>`;h+=`<th style="background:rgba(100,200,100,.08)">Pts Won</th>`;for(let r=0;r<nR;r++)h+=`<th>R${r+1}</th>`;thead.innerHTML=h;
-  const totals=nR>0?(history[nR-1].totals||{}):state.totalScores||{};
-  const sorted=players.map((p,i)=>({p,i,total:totals[i]??0})).sort((a,b)=>b.total-a.total);
-  tbody.innerHTML=sorted.map(({p,i},rank)=>{const total=totals[i]??0,tCls=total>0?'positive':total<0?'negative':'zero',ptsTaken=state.sessionTrickPts?.[i]??0,isMe=i===myIndex;let row=`<tr class="${isMe?'me-row':''}${rank===0?' rank-1':''}">`;const medal=['🥇','🥈','🥉','4','5'][rank]||`${rank+1}`;row+=`<td style="text-align:center">${medal}</td>`;row+=`<td style="text-align:left;font-weight:600">${esc(p.name)}${p.isBot?' 🤖':''}${isMe?' <em>(you)</em>':''}</td>`;row+=`<td class="${tCls}" style="font-weight:800;background:rgba(240,208,80,.05);border-right:1px solid rgba(255,255,255,.12)">${total>=0?'+':''}${total}</td>`;row+=`<td style="color:#88ccff;font-weight:600">${ptsTaken}</td>`;for(const rnd of history){const sc=rnd.scores?.[i]??0,cls2=sc>0?'positive':sc<0?'negative':'zero';row+=`<td class="${cls2}">${sc>=0?'+':''}${sc}</td>`;}return row+'</tr>';}).join('');
-}
 
 function openKickModal(targetIdx){
   _kickTarget=targetIdx;const name=gameState?.players[targetIdx]?.name||'player';
@@ -278,11 +284,115 @@ function showBarChart(data){
 let fwId=null,fwParts=[];
 function startFireworks(){const canvas=el('firework-canvas');if(!canvas)return;const ctx=canvas.getContext('2d');canvas.width=window.innerWidth;canvas.height=window.innerHeight;const COLS=['#f0d080','#ff6b6b','#6bffb8','#6bb8ff','#ff6bf0','#fff','#88ff99'];function burst(){const x=Math.random()*canvas.width,y=Math.random()*canvas.height*.7,col=COLS[Math.floor(Math.random()*COLS.length)];for(let i=0;i<60;i++){const a=(Math.PI*2/60)*i,sp=2+Math.random()*5;fwParts.push({x,y,vx:Math.cos(a)*sp,vy:Math.sin(a)*sp,alpha:1,color:col,size:2+Math.random()*2.5,decay:.01+Math.random()*.008});}}let fr=0;function animate(){fwId=requestAnimationFrame(animate);ctx.fillStyle='rgba(0,0,0,.16)';ctx.fillRect(0,0,canvas.width,canvas.height);fr++;if(fr%38===0)burst();if(fr===1){burst();burst();burst();}fwParts=fwParts.filter(p=>p.alpha>.02);for(const p of fwParts){p.x+=p.vx;p.y+=p.vy;p.vy+=.06;p.alpha-=p.decay;p.vx*=.98;ctx.globalAlpha=Math.max(0,p.alpha);ctx.fillStyle=p.color;ctx.beginPath();ctx.arc(p.x,p.y,p.size,0,Math.PI*2);ctx.fill();}ctx.globalAlpha=1;}burst();animate();}
 function stopFireworks(){if(fwId){cancelAnimationFrame(fwId);fwId=null;}fwParts=[];const c=el('firework-canvas');if(c)c.getContext('2d').clearRect(0,0,c.width,c.height);}
-function _resetToStart(msg){stopFireworks();clr();myIndex=-1;myRoomId='';myName='';gameState=null;isViewer=false;earlyLossActive=false;_chatDone=false;document.querySelectorAll('.modal-overlay').forEach(m=>m.classList.add('hidden'));el('trump-toast')?.classList.add('hidden');el('podium-screen')?.classList.add('hidden');showScreen('login-screen');const le=el('login-error');if(le)le.textContent=msg||'Game over.';}
+function _resetToStart(msg){stopFireworks();clr();myIndex=-1;myRoomId='';myName='';gameState=null;isViewer=false;earlyLossActive=false;_chatDone=false;_lastTrumpShown='';document.querySelectorAll('.modal-overlay').forEach(m=>m.classList.add('hidden'));el('trump-toast')?.classList.add('hidden');el('trump-banner')?.classList.add('hidden');el('podium-screen')?.classList.add('hidden');showScreen('login-screen');const le=el('login-error');if(le)le.textContent=msg||'Game over.';}
 
-function initBanterRow(){if(_banterDone)return;const btns=el('banter-btns');if(!btns)return;btns.innerHTML=BANTER.map(b=>`<button class="banter-btn" onclick="sendBanter(${JSON.stringify(b)})">${b}</button>`).join('');_banterDone=true;}
-function toggleChat(){chatOpen=!chatOpen;el('chat-body')?.classList.toggle('hidden',!chatOpen);const tl=el('chat-toggle-label');if(tl)tl.textContent=chatOpen?'▼ close':'▲ open';if(chatOpen){chatUnread=0;el('chat-unread')?.classList.add('hidden');}}
-function appendChat(name,msg,t){const box=el('chat-messages');if(!box)return;const time=t?new Date(t).toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'}):'';const div=document.createElement('div');div.className='chat-msg'+(name===myName?' chat-mine':'');div.innerHTML=`<span class="chat-name">${esc(name)}</span> <span class="chat-text">${esc(msg)}</span> <span class="chat-time">${time}</span>`;box.appendChild(div);box.scrollTop=box.scrollHeight;if(box.children.length>60)box.removeChild(box.firstChild);}
-function sendChat(){const inp=el('chat-input');if(!inp)return;const msg=inp.value.trim();if(!msg)return;socket.emit('chat',{message:msg});inp.value='';}
-function sendBanter(msg){socket.emit('chat',{message:msg});}
+// Fix 1: Prominent trump banner shown once when trump is set
+let _lastTrumpShown='';
+function showTrumpBanner(trump, chooserName) {
+  if (!trump||!chooserName) return;
+  const key=trump+chooserName;
+  if (_lastTrumpShown===key) return; // only show once per trump selection
+  _lastTrumpShown=key;
+  const label=trump===NO_TRUMP?'🚫 No Trump':`${SUIT_SYM[trump]} ${SUIT_NAME[trump]}`;
+  const banner=el('trump-banner');
+  if (!banner) return;
+  banner.innerHTML=`<strong>${esc(chooserName)}</strong> chose <strong>${label}</strong>`;
+  banner.classList.remove('hidden');
+  banner.classList.add('trump-banner-in');
+  clearTimeout(banner._t);
+  banner._t=setTimeout(()=>{ banner.classList.add('hidden'); banner.classList.remove('trump-banner-in'); },4000);
+}
+
+// Fix 7: Banter — 5-second per-player cooldown + floating animation
+let _banterCooldown=false;
+function initBanterRow(){
+  if(_banterDone)return;
+  const btns=el('banter-btns');if(!btns)return;
+  // Fix 7: use btn-banter (matches CSS) not banter-btn
+  btns.innerHTML=BANTER.map(b=>`<button class="btn-banter" onclick="sendBanter(${JSON.stringify(b)})">${b}</button>`).join('');
+  _banterDone=true;
+}
+function toggleChat(){
+  chatOpen=!chatOpen;
+  el('chat-body')?.classList.toggle('hidden',!chatOpen);
+  const tl=el('chat-toggle-label');if(tl)tl.textContent=chatOpen?'▼ close':'▲ open';
+  if(chatOpen){chatUnread=0;el('chat-unread')?.classList.add('hidden');}
+}
+function appendChat(name,msg,t){
+  const box=el('chat-messages');if(!box)return;
+  const time=t?new Date(t).toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'}):'';
+  const div=document.createElement('div');
+  div.className='chat-msg'+(name===myName?' chat-mine':'');
+  div.innerHTML=`<span class="chat-name">${esc(name)}</span> <span class="chat-text">${esc(msg)}</span> <span class="chat-time">${time}</span>`;
+  box.appendChild(div);box.scrollTop=box.scrollHeight;
+  if(box.children.length>60)box.removeChild(box.firstChild);
+}
+function sendChat(){
+  const inp=el('chat-input');if(!inp)return;
+  const msg=inp.value.trim();if(!msg)return;
+  socket.emit('chat',{message:msg});inp.value='';
+}
+// Fix 7: banter with 5s throttle and floating animation
+function sendBanter(msg){
+  if(_banterCooldown){setMsg('Wait 5 seconds before sending another banter!');return;}
+  socket.emit('chat',{message:msg});
+  _banterCooldown=true;
+  // Grey out all banter buttons
+  document.querySelectorAll('.btn-banter').forEach(b=>{b.style.opacity='0.4';b.style.pointerEvents='none';});
+  setTimeout(()=>{
+    _banterCooldown=false;
+    document.querySelectorAll('.btn-banter').forEach(b=>{b.style.opacity='';b.style.pointerEvents='';});
+  },5000);
+}
 el('chat-input')?.addEventListener('keydown',e=>{if(e.key==='Enter')sendChat();});
+
+// Fix 7: floating banter toast in game area
+socket.on('chat',entry=>{
+  appendChat(entry.name,entry.msg,entry.t);
+  if(!chatOpen){chatUnread++;el('chat-unread')?.classList.remove('hidden');}
+  playSound('chat');
+  // Show a floating animation in the game area for banter messages
+  if(BANTER.some(b=>entry.msg.startsWith(b.split(' ')[0]))||BANTER.includes(entry.msg)){
+    showBanterFloat(entry.name, entry.msg);
+  }
+});
+function showBanterFloat(name, msg) {
+  const float=document.createElement('div');
+  float.className='banter-float';
+  float.innerHTML=`<span class="banter-float-name">${esc(name)}</span><br>${esc(msg)}`;
+  document.body.appendChild(float);
+  // Random horizontal position
+  float.style.left=`${20+Math.random()*60}%`;
+  setTimeout(()=>float.remove(),3500);
+}
+
+// Fix 5: cumulative pts uses players[i].sessionTrickPts (present during game)
+function buildScModal(state){
+  if(!state)return;const players=state.players||[],history=state.roundHistory||[],nR=history.length;
+  const thead=el('sc-modal-thead'),tbody=el('sc-modal-body');if(!thead||!tbody)return;
+  let h=`<th style="text-align:left">#</th><th style="text-align:left">Player</th>`;
+  h+=`<th style="background:rgba(240,208,80,.1);border-right:1px solid rgba(255,255,255,.12)">Total</th>`;
+  h+=`<th style="background:rgba(100,200,100,.08)">Pts Won</th>`;
+  for(let r=0;r<nR;r++)h+=`<th>R${r+1}</th>`;thead.innerHTML=h;
+  const totals=nR>0?(history[nR-1]?.totals||{}):{}; 
+  // Fall back to players[i].totalScore if totals object is empty
+  const sorted=players.map((p,i)=>({p,i,total:totals[i]??p.totalScore??0})).sort((a,b)=>b.total-a.total);
+  tbody.innerHTML=sorted.map(({p,i},rank)=>{
+    const total=totals[i]??p.totalScore??0;
+    const tCls=total>0?'positive':total<0?'negative':'zero';
+    // Fix 5: p.sessionTrickPts = past rounds; p.trickPts = current round (live)
+    const ptsTaken=(p.sessionTrickPts||0)+(p.trickPts||0);
+    const isMe=i===myIndex;
+    let row=`<tr class="${isMe?'me-row':''}${rank===0?' rank-1':''}">`;
+    const medal=['🥇','🥈','🥉','4','5'][rank]||`${rank+1}`;
+    row+=`<td style="text-align:center">${medal}</td>`;
+    row+=`<td style="text-align:left;font-weight:600">${esc(p.name)}${p.isBot?' 🤖':''}${isMe?' <em>(you)</em>':''}</td>`;
+    row+=`<td class="${tCls}" style="font-weight:800;background:rgba(240,208,80,.05);border-right:1px solid rgba(255,255,255,.12)">${total>=0?'+':''}${total}</td>`;
+    row+=`<td style="color:#88ccff;font-weight:600">${ptsTaken}</td>`;
+    for(const rnd of history){
+      const sc=rnd.scores?.[i]??0,cls2=sc>0?'positive':sc<0?'negative':'zero';
+      row+=`<td class="${cls2}">${sc>=0?'+':''}${sc}</td>`;
+    }
+    return row+'</tr>';
+  }).join('');
+}

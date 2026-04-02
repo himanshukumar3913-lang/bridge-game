@@ -144,24 +144,68 @@ h1{font-family:var(--font-head);font-size:46px;color:var(--gold-light);text-shad
 #my-cards-row{display:flex;gap:5px;overflow-x:auto;padding-bottom:2px;scrollbar-width:thin;scrollbar-color:rgba(255,255,255,.1) transparent;}
 
 /* ── CHAT BOX ── */
+/* Fix 1: Trump banner – shown prominently when trump is chosen */
+.trump-banner {
+  background: linear-gradient(90deg, rgba(201,168,76,.25), rgba(201,168,76,.12));
+  border-bottom: 2px solid rgba(201,168,76,.5);
+  color: var(--gold-light);
+  font-size: 14px; font-weight: 600;
+  text-align: center;
+  padding: 6px 12px;
+  flex-shrink: 0;
+  animation: trump-banner-slide .4s ease-out both;
+}
+@keyframes trump-banner-slide {
+  from { transform: translateY(-100%); opacity: 0; }
+  to   { transform: translateY(0);     opacity: 1; }
+}
+.trump-banner.hidden { display: none !important; }
+
+/* Fix 7: floating banter toast */
+.banter-float {
+  position: fixed;
+  bottom: 30%;
+  transform: translateX(-50%);
+  background: rgba(30,30,30,.92);
+  border: 1px solid rgba(201,168,76,.4);
+  color: var(--text);
+  font-size: 14px; font-weight: 600;
+  padding: 8px 18px;
+  border-radius: 20px;
+  z-index: 200;
+  pointer-events: none;
+  text-align: center;
+  animation: banter-rise 3.2s ease-out forwards;
+  white-space: nowrap;
+  max-width: 280px;
+}
+.banter-float-name { font-size: 11px; color: var(--gold); display: block; margin-bottom: 2px; }
+@keyframes banter-rise {
+  0%   { opacity: 0;   transform: translateX(-50%) translateY(20px); }
+  15%  { opacity: 1;   transform: translateX(-50%) translateY(0); }
+  70%  { opacity: 1;   transform: translateX(-50%) translateY(-30px); }
+  100% { opacity: 0;   transform: translateX(-50%) translateY(-60px); }
+}
+
 #chat-zone{background:rgba(0,0,0,.5);border-top:1px solid rgba(255,255,255,.08);flex-shrink:0;z-index:11;}
 #chat-header{display:flex;align-items:center;gap:8px;padding:6px 12px;cursor:pointer;font-size:13px;font-weight:600;color:var(--text-dim);user-select:none;}
 #chat-header:hover{color:var(--text);}
 .chat-unread{color:var(--gold-light);font-size:16px;line-height:1;}
-#chat-body{display:flex;flex-direction:column;max-height:200px;}
-#chat-messages{flex:1;overflow-y:auto;padding:6px 10px;display:flex;flex-direction:column;gap:4px;max-height:120px;scrollbar-width:thin;}
+/* Fix 6: bigger chat body */
+#chat-body{display:flex;flex-direction:column;max-height:280px;}
+#chat-messages{flex:1;overflow-y:auto;padding:6px 10px;display:flex;flex-direction:column;gap:4px;max-height:180px;scrollbar-width:thin;}
 .chat-msg{font-size:12px;line-height:1.4;}
-.chat-msg.chat-me .chat-name{color:var(--gold);}
+.chat-msg.chat-me .chat-name,.chat-msg.chat-mine .chat-name{color:var(--gold);}
 .chat-name{color:#88ccff;font-weight:600;}
 .chat-text{color:var(--text);}
-#banter-row{padding:4px 8px;overflow-x:auto;white-space:nowrap;scrollbar-width:thin;}
-#banter-btns{display:inline-flex;gap:4px;}
-.btn-banter{background:rgba(255,255,255,.07);color:var(--text-dim);border:1px solid rgba(255,255,255,.12);border-radius:12px;padding:3px 10px;font-size:11px;cursor:pointer;white-space:nowrap;transition:background .15s;flex-shrink:0;}
-.btn-banter:hover{background:rgba(255,255,255,.15);color:var(--text);}
-#chat-input-row{display:flex;gap:6px;padding:6px 8px;}
-#chat-input{flex:1;background:rgba(255,255,255,.08);border:1px solid rgba(255,255,255,.12);border-radius:6px;color:var(--text);font-size:13px;padding:6px 10px;outline:none;font-family:var(--font-body);}
+#banter-row{padding:5px 8px;overflow-x:auto;white-space:nowrap;scrollbar-width:thin;}
+#banter-btns{display:inline-flex;gap:5px;}
+.btn-banter{background:rgba(255,255,255,.1);color:var(--text);border:1px solid rgba(255,255,255,.18);border-radius:14px;padding:5px 12px;font-size:12px;cursor:pointer;white-space:nowrap;transition:background .15s,transform .1s;flex-shrink:0;-webkit-tap-highlight-color:transparent;}
+.btn-banter:hover,.btn-banter:active{background:rgba(255,255,255,.22);color:#fff;transform:scale(1.05);}
+#chat-input-row{display:flex;gap:6px;padding:8px 8px;}
+#chat-input{flex:1;background:rgba(255,255,255,.1);border:1px solid rgba(255,255,255,.15);border-radius:8px;color:var(--text);font-size:14px;padding:8px 12px;outline:none;font-family:var(--font-body);}
 #chat-input:focus{border-color:var(--gold);}
-#chat-input-row button{background:rgba(201,168,76,.2);color:var(--gold-light);border:1px solid rgba(201,168,76,.3);border-radius:6px;padding:6px 12px;font-size:12px;font-weight:600;cursor:pointer;transition:background .15s;}
+#chat-input-row button{background:rgba(201,168,76,.2);color:var(--gold-light);border:1px solid rgba(201,168,76,.3);border-radius:8px;padding:8px 14px;font-size:13px;font-weight:600;cursor:pointer;transition:background .15s;}
 #chat-input-row button:hover{background:rgba(201,168,76,.35);}
 
 /* ── Cards ── */
@@ -293,9 +337,9 @@ h1{font-family:var(--font-head);font-size:46px;color:var(--gold-light);text-shad
   #my-hand-zone{position:static;padding:5px 5px;flex-shrink:0;padding-bottom:max(7px,env(safe-area-inset-bottom));}
   #my-hand-label{font-size:10px;margin-bottom:3px;}
   #my-cards-row{gap:3px;}
-  #chat-zone{max-height:130px;}
-  #chat-body{max-height:110px;}
-  #chat-messages{max-height:70px;}
+  #chat-zone{max-height:200px;}
+  #chat-body{max-height:180px;}
+  #chat-messages{max-height:110px;}
 }
 @media (max-width:360px) and (orientation:portrait) {
   #play-area{grid-template-columns:58px 1fr 58px;gap:3px;}

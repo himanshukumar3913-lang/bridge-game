@@ -98,9 +98,12 @@
     <span id="info-round"  class="chip"></span>
     <span id="info-viewer" class="chip chip-viewer hidden">👁 <span id="viewer-count">0</span></span>
     <button id="btn-scorecard"    class="btn-sm btn-sm-gold" onclick="openScorecardModal()" title="View Scorecard">📊</button>
-    <button id="cancel-game-btn"  class="btn-sm btn-sm-red hidden" onclick="cancelGame()" title="End Game">✕</button>
-    <button id="exit-game-btn"    class="btn-sm btn-sm-red" onclick="exitGame()" title="Exit Game">🚪</button>
+    <button id="cancel-game-btn"  class="btn-sm btn-sm-red  hidden" onclick="cancelGame()">✕ End</button>
+    <button id="skip-score-btn"   class="btn-sm btn-sm-gold hidden" onclick="skipToScore()">⏭ Skip</button>
+    <button id="exit-game-btn"    class="btn-sm btn-sm-red"  onclick="exitGame()">🚪 Exit</button>
   </div>
+  <!-- Fix 1: prominent trump banner -->
+  <div id="trump-banner" class="trump-banner hidden"></div>
   <div id="msg-bar"></div>
 
   <!-- 3-column play area -->
