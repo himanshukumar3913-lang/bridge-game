@@ -308,8 +308,16 @@ let _banterCooldown=false;
 function initBanterRow(){
   if(_banterDone)return;
   const btns=el('banter-btns');if(!btns)return;
-  // Fix 7: use btn-banter (matches CSS) not banter-btn
-  btns.innerHTML=BANTER.map(b=>`<button class="btn-banter" onclick="sendBanter(${JSON.stringify(b)})">${b}</button>`).join('');
+  // Use data-index to avoid inline-onclick double-quote escaping bug
+  btns.innerHTML=BANTER.map((b,i)=>`<button class="btn-banter" data-bi="${i}">${b}</button>`).join('');
+  // Single delegated listener on the container
+  btns.addEventListener('click',e=>{
+    const btn=e.target.closest('.btn-banter');
+    if(!btn)return;
+    const idx=parseInt(btn.dataset.bi,10);
+    if(isNaN(idx)||!BANTER[idx])return;
+    sendBanter(BANTER[idx]);
+  });
   _banterDone=true;
 }
 function toggleChat(){

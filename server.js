@@ -1,11 +1,14 @@
 /**
  * Bridge Card Game – Server
- * Bugs fixed: auto-pass timer, scheduleBotTrump illegal deal, room-not-found
- * New: host kick mid-game, total pts taken, room name, chat/banter, session CSV log
+ * Bugs fixed: auto-pass timer, scheduleBotTrump illegal deal, room-not-found,
+ *             banter onclick, stale bot chains
+ * New: host kick, total pts taken, room name, chat/banter,
+ *      Supabase permanent player-wise session logs
  */
 
 const express = require('express');
 const http    = require('http');
+const https   = require('https');
 const { Server } = require('socket.io');
 const path    = require('path');
 const fs      = require('fs');
@@ -22,58 +25,144 @@ app.use(express.static(path.join(__dirname,'public')));
 app.get('/health',(_,res)=>res.send('OK'));
 app.get('/ping',(_,res)=>res.json({status:'alive',rooms:Object.keys(games).length,ts:Date.now()}));
 
-// Fix 3 & 4: prevent Render free-tier sleep that wipes in-memory game state.
-// Strategy A: self-ping via RENDER_EXTERNAL_URL (set this in Render env vars)
-// Strategy B: fallback self-ping via localhost after server is ready
+// ── Keep Render awake (self-ping every 4 min) ──
 const SELF_URL = process.env.RENDER_EXTERNAL_URL || '';
 function doSelfPing() {
   try {
-    if (SELF_URL) {
-      const mod = SELF_URL.startsWith('https') ? require('https') : require('http');
-      mod.get(SELF_URL + '/ping', r => r.resume()).on('error', () => {});
-    } else {
-      // Fallback: ping our own localhost port
-      require('http').get(`http://localhost:${process.env.PORT||3000}/ping`, r => r.resume()).on('error', () => {});
-    }
+    const url = SELF_URL || `http://localhost:${process.env.PORT||3000}`;
+    const mod = url.startsWith('https') ? https : require('http');
+    mod.get(url+'/ping', r=>r.resume()).on('error',()=>{});
   } catch(e) {}
 }
-// Ping every 4 minutes (Render sleeps after 15 min idle)
-setInterval(doSelfPing, 4 * 60 * 1000);
-console.log('Self-ping scheduled every 4 min', SELF_URL ? `→ ${SELF_URL}/ping` : '(localhost fallback)');
+setInterval(doSelfPing, 4*60*1000);
+console.log('Self-ping every 4 min →', SELF_URL||'localhost');
 
-// Session log file (CSV)
+// ══════════════════════════════════════════════════════
+//  SUPABASE LOGGING
+//  Set env vars in Render Dashboard → Environment:
+//    SUPABASE_URL  = https://xxxxxxxxxxxx.supabase.co
+//    SUPABASE_KEY  = your-anon-public-key
+//
+//  Run this SQL once in Supabase SQL Editor to create the table:
+//  ─────────────────────────────────────────────────────
+//  create table if not exists bridge_sessions (
+//    id           bigserial primary key,
+//    room_code    text,
+//    room_name    text,
+//    player_name  text,
+//    ip           text,
+//    start_time   timestamptz,
+//    end_time     timestamptz,
+//    duration_min int,
+//    final_score  int,
+//    pts_taken    int,
+//    rounds       int,
+//    created_at   timestamptz default now()
+//  );
+//  ─────────────────────────────────────────────────────
+// ══════════════════════════════════════════════════════
+
+const SUPABASE_URL = process.env.SUPABASE_URL || '';
+const SUPABASE_KEY = process.env.SUPABASE_KEY || '';
+
+// Convert UTC date to IST string (UTC+5:30)
+function toIST(d) {
+  const ist = new Date(d.getTime() + 5.5*60*60*1000);
+  return ist.toISOString().replace('T',' ').replace('Z','').slice(0,19) + ' IST';
+}
+
+// Insert one row per player into Supabase
+function supabaseInsert(rows) {
+  if (!SUPABASE_URL || !SUPABASE_KEY) return; // env vars not set
+  const body = JSON.stringify(rows);
+  const url  = new URL('/rest/v1/bridge_sessions', SUPABASE_URL);
+  const opts = {
+    hostname: url.hostname,
+    path:     url.pathname,
+    method:   'POST',
+    headers: {
+      'apikey':        SUPABASE_KEY,
+      'Authorization': `Bearer ${SUPABASE_KEY}`,
+      'Content-Type':  'application/json',
+      'Prefer':        'return=minimal',
+      'Content-Length': Buffer.byteLength(body),
+    },
+  };
+  const req = https.request(opts, res=>{
+    if (res.statusCode >= 300) {
+      let d=''; res.on('data',c=>d+=c);
+      res.on('end',()=>console.error('Supabase insert error',res.statusCode,d));
+    }
+    res.resume();
+  });
+  req.on('error', e=>console.error('Supabase network error:',e.message));
+  req.write(body); req.end();
+}
+
+// Local CSV as backup (also written even when Supabase is configured)
 const LOG_FILE = path.join(__dirname,'sessions.csv');
 if (!fs.existsSync(LOG_FILE)) {
   fs.writeFileSync(LOG_FILE,
-    'Date,RoomCode,RoomName,StartTime,EndTime,DurationMin,Players,IPs,FinalScores,TotalPtsTaken\n'
+    'Date(IST),RoomCode,RoomName,PlayerName,IP,StartTime(IST),EndTime(IST),DurationMin,FinalScore,PtsTaken,Rounds\n'
   );
 }
+
 function appendSessionLog(game, endTime) {
   try {
-    const start   = new Date(game._startTime||Date.now());
+    const start   = new Date(game._startTime || Date.now());
     const end     = new Date(endTime);
-    const dur     = Math.round((end-start)/60000);
-    const players = game.players.map(p=>p.name).join('|');
-    const ips     = game.players.map(p=>p.ip||'unknown').join('|');
-    const scores  = game.players.map((_,i)=>game.totalScores[i]||0).join('|');
-    const ptstaken= game.players.map((_,i)=>game.sessionTrickPts[i]||0).join('|');
-    const row = [
-      start.toISOString().split('T')[0],
-      game.roomId,
-      (game.roomName||'').replace(/,/g,';'),
-      start.toISOString(),
-      end.toISOString(),
-      dur, players, ips, scores, ptstaken,
-    ].join(',');
-    fs.appendFileSync(LOG_FILE, row+'\n');
-  } catch(e) { console.error('Log error:',e.message); }
+    const dur     = Math.round((end - start) / 60000);
+    const rounds  = game.matchRound || 0;
+    const rows    = [];  // one row per player for Supabase
+
+    for (let i = 0; i < game.players.length; i++) {
+      const p     = game.players[i];
+      const score = game.totalScores[i] || 0;
+      const taken = game.sessionTrickPts[i] || 0;
+
+      // Supabase row (one per player)
+      rows.push({
+        room_code:   game.roomId,
+        room_name:   game.roomName || '',
+        player_name: p.name,
+        ip:          p.ip || 'unknown',
+        start_time:  start.toISOString(),
+        end_time:    end.toISOString(),
+        duration_min: dur,
+        final_score: score,
+        pts_taken:   taken,
+        rounds:      rounds,
+      });
+
+      // CSV row (one per player)
+      const csvRow = [
+        toIST(start).slice(0,10),
+        game.roomId,
+        (game.roomName||'').replace(/,/g,';'),
+        p.name.replace(/,/g,';'),
+        p.ip || 'unknown',
+        toIST(start),
+        toIST(end),
+        dur,
+        score,
+        taken,
+        rounds,
+      ].join(',');
+      fs.appendFileSync(LOG_FILE, csvRow + '\n');
+    }
+
+    // Push all players to Supabase in one request
+    if (rows.length > 0) supabaseInsert(rows);
+
+  } catch(e) { console.error('Log error:', e.message); }
 }
 
-// Download log endpoint (host only – just a password-less download; protect with Render env var if needed)
+// Download CSV endpoint
 app.get('/download-log', (req,res)=>{
-  if (!fs.existsSync(LOG_FILE)) { res.send('No sessions yet'); return; }
-  res.download(LOG_FILE,'bridge-sessions.csv');
+  if (!fs.existsSync(LOG_FILE)) { res.send('No sessions logged yet'); return; }
+  res.download(LOG_FILE, 'bridge-sessions.csv');
 });
+
 
 // ══════════════════════════════════════════════════════
 //  CARD SYSTEM
