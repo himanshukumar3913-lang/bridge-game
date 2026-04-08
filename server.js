@@ -1241,5 +1241,23 @@ setInterval(()=>{
   }
 },10*60*1000);
 
-const PORT=process.env.PORT||3000;
-server.listen(PORT,()=>console.log(`\n🃏 Bridge running at http://localhost:${PORT}\n`));
+const PORT = process.env.PORT || 3000;
+
+process.on('uncaughtException', (err) => {
+  console.error('CRASH PREVENTED:', err.message, err.stack);
+});
+
+process.on('unhandledRejection', (reason) => {
+  console.error('UNHANDLED REJECTION:', reason);
+});
+
+process.on('SIGTERM', () => {
+  server.close(() => process.exit(0));
+  setTimeout(() => process.exit(1), 10000);
+});
+
+server.listen(PORT, () => {
+  console.log(`\n🃏 Bridge running at http://localhost:${PORT}`);
+  console.log(`Memory: ${Math.round(process.memoryUsage().heapUsed/1024/1024)}MB used`);
+  setTimeout(doSelfPing, 5000);
+});
