@@ -1,3 +1,6 @@
+"scripts": {
+  "start": "node --max-old-space-size=400 server.js"
+}
 {
   "name": "bridge-card-game",
   "version": "1.0.0",
